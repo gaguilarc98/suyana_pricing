@@ -1,0 +1,72 @@
+pipeline:
+  name: "Drought Parametric Product"
+  version: "1.0.0"
+
+paths:
+  # Path to the pre-extracted pixel-level time series (Parquet recommended for speed)
+  input_data: "../drought_pipeline_v2/data/extracted_pixels.parquet"
+  output_dir: "./outputs"
+
+parameters:
+  target_crop: "Trigo"  # Set to "All" to process all crops, or specify one (e.g., "Trigo")
+  climatology:
+    start_year: 1996
+    end_year: 2025
+
+  # Payout structure for the triggers
+  payout_structure:
+    P1: 1.00  # 100% of the tier limit
+    P5: 0.40  # 40%
+    P10: 0.20 # 20%
+
+  # Cost parameters by region (loss total or per hectare)
+  regions:
+    Sur:
+      cost_min: 600
+      cost_midpoint: 750
+      cost_max: 900
+    Norte:
+      cost_min: 900
+      cost_midpoint: 1050
+      cost_max: 1200
+
+  # Crops and their seasonal windows
+  crops:
+    Trigo:
+      start_month: 9
+      start_day: 15
+      end_month: 11
+      end_day: 14
+      crosses_year: false
+    Soja Sur:
+      start_month: 1
+      start_day: 20
+      end_month: 3
+      end_day: 19
+      crosses_year: false
+    Maiz Sur:
+      start_month: 12
+      start_day: 15
+      end_month: 2
+      end_day: 14
+      crosses_year: true
+    Soja Norte:
+      start_month: 2
+      start_day: 1
+      end_month: 3
+      end_day: 31
+      crosses_year: false
+    Maiz Norte:
+      start_month: 2
+      start_day: 10
+      end_month: 4
+      end_day: 9
+      crosses_year: false
+
+  pricing:
+    loading_factor: 1.5  # Multiplier applied to AAL or AAL + std_dev
+    margin: 0.20
+
+  bootstrap:
+    n_iterations: 10000
+    seed: 42

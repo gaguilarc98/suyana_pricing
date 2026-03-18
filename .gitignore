@@ -12,9 +12,13 @@ build/
 *.nc
 *.tif
 *.tiff
-outputs/
 data/raw/
 data/processed/
+
+# Ignore outputs globally except for the pricing component's sample run outputs
+outputs/
+!pricing/outputs/
+!pricing/outputs/**
 
 # Secrets
 .env
