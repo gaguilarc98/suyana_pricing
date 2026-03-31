@@ -1,0 +1,135 @@
+# Here you can define all your datasets by using simple YAML syntax.
+#
+# Documentation for this file format can be found in "The Data Catalog"
+# Link: https://docs.kedro.org/en/stable/catalog-data/introduction/#data-catalog
+# Here you can define all your datasets by using simple YAML syntax.
+
+# Arguments
+# Use snake_case style for uniformity e.g. costa_rica, 'swiss_re', 'bisa_seguros'
+_arg:
+  country: ${runtime_params:country, ${globals:country}} 
+  lead_id: ${runtime_params:lead_id, 'Test-Lead'}
+  provider: ${runtime_params:provider, ${globals:provider}}
+  field: ${runtime_params:field, ${globals:field}}
+  version: ${runtime_params:version, ${globals:version}}
+
+# Geometry Data
+gdf_request: 
+  type: geopandas.GenericDataset
+  filepath: ${globals:data_path}/geometries/AR_departamento.parquet 
+  #filepath: /home/jupyter-gabriel/suyana/geometries/AR_departamento.gpkg 
+  file_format: parquet
+  save_args:
+    compression: GZIP
+  #load_args:
+  #  driver: GPKG
+  #  encoding: UTF-8
+
+# Request Data:
+'{namespace}.dict_bounds':
+  type: MemoryDataset
+  #type: json.JSONDataset  # Note: Use JSONDataSet from kedro_datasets
+  #filepath: data/${_arg.country}/my_data.json
+  
+'{namespace}.gdf_aoi':
+  type: geopandas.GenericDataset
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.lead_id}/geometries/location_geometries.parquet 
+  file_format: parquet #Important if not provided kedro will attempt to use GDAL which does not support S3 natively
+  save_args:
+    compression: GZIP
+  #  driver: GPKG
+  #load_args:
+  #  driver: GPKG
+  #  encoding: UTF-8
+
+'{namespace}.ds_request':
+  #type: pricing_automation.datasets_registry.NetCDFPartitionedDataset
+  #filepath: data/${_arg.country}/sources/${_arg.provider}/${_arg.field}_<partition>.nc
+  type: pricing_automation.datasets_registry.ZarrPartitionedDataset
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.lead_id}/sources/${_arg.provider}_${_arg.field}_<partition>.zarr
+  save_args:
+    consolidated: true
+    mode: w
+  load_args:
+    combine: by_coords
+    parallel: true
+
+# Index Data
+'{namespace}.ds_processed':
+  type: pricing_automation.datasets_registry.XarrayZarrDataset
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.lead_id}/features/${_arg.provider}_${_arg.field}_anomalies.zarr #${_arg.version}.zarr
+  save_args:
+    consolidated: true
+    mode: w
+    append_dim: time
+    chunks: {'time': 1800, 'lat': -1, 'lon': -1}
+  load_args:
+    consolidated: true
+
+'{namespace}.ds_climatology': 
+  type: pricing_automation.datasets_registry.XarrayZarrDataset
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.lead_id}/features/${_arg.provider}_${_arg.field}_climatology.zarr
+  save_args:
+    consolidated: true
+    mode: w
+    append_dim: climate_area_id
+  load_args:
+    consolidated: true
+
+# Summarized Data
+'{namespace}.df_pixels':
+  type: pandas.ParquetDataset
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.lead_id}/features/${_arg.provider}_${_arg.field}_pixel_assignment.parquet
+
+'{namespace}.df_cluster': 
+  type: pandas.ParquetDataset
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.lead_id}/outputs/${_arg.provider}_${_arg.field}_daily_indices.parquet 
+  save_args:
+    compression: GZIP
+
+# Window Data
+'{namespace}.df_triggers': 
+  type: pandas.ParquetDataset
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.lead_id}/outputs/${_arg.provider}_${_arg.field}_window_triggers.parquet
+  save_args:
+    compression: GZIP
+
+'{namespace}.df_percentiles':
+  type: pandas.ParquetDataset
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.lead_id}/outputs/${_arg.provider}_${_arg.field}_percentiles.parquet
+  save_args:
+    compression: GZIP
+
+# AEP Data
+'{namespace}.df_annual_agg': 
+  type: pandas.ParquetDataset
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.lead_id}/outputs/aggregate_annual_losses.parquet
+  save_args:
+    compression: GZIP
+
+'{namespace}.df_aep':
+  type: pandas.ParquetDataset
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.lead_id}/outputs/aep_curves.parquet
+  save_args:
+    compression: GZIP
+
+# Quote Data
+'{namespace}.df_pricing': 
+  type: pandas.ParquetDataset
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.lead_id}/outputs/pricing_quote.parquet
+  save_args:
+    compression: GZIP
+
+'{namespace}.plt_portfolio':
+  type: matplotlib.MatplotlibDataset
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.lead_id}/displays/aep_portfolio.png
+  save_args:
+    bbox_inches: tight
+    dpi: 150
+
+'{namespace}.plt_aep':
+  type: matplotlib.MatplotlibDataset
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.lead_id}/displays/aep_per_crop.png
+  save_args:
+    bbox_inches: tight
+    dpi: 150
