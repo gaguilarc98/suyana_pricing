@@ -1,0 +1,80 @@
+# Parameters for already available areas
+_arg:
+  country: ${runtime_params:country, ${globals:country}}
+  lead_id: ${runtime_params:lead_id, 'Test-Lead'}
+  provider: ${runtime_params:provider, ${globals:provider}}
+  field: ${runtime_params:field, ${globals:field}}
+  start_year: ${runtime_params:start_year, 1996}
+  end_year: ${runtime_params:end_year, 2025}
+
+# ERA5
+# Parameters for aoi bounding box
+params_s:
+  #location_var: 'gid' #'climate_area_id' #id_canton
+  #lon_name: 'gps_locationlongitude'
+  #lat_name: 'gps_locationlatitude'
+  include: {'depto': ['06']}
+  exclude: {}
+  override_gdf: true
+  minx: -60
+  maxx: -55
+  miny: -30
+  maxy: -25
+
+# Parameters for time slice
+params_t:
+  start_year: ${_arg.start_year}
+  end_year: ${_arg.end_year}
+
+# Parameters for data retrieval from ERA5
+params_request:
+  country: ${_arg.country}
+  lead_id: ${_arg.lead_id}
+  provider: ${_arg.provider}
+  field: ${_arg.field}
+      
+
+# Parameters for processing downloaded data
+params_process:
+  variable: 'swvl1'
+  na_replace: null
+  time_window:
+    - '2024-01-01'
+    - '2025-12-31'
+  interp_resolution: 0
+  time_smooth_window: 0
+  climatology_smooth_window: 0
+  summarize_mode: 'pixel' #'nearest' #'within'
+  add_neg_anom: false
+  
+# Parameters for creating triggers
+create_trigger:
+  windows:
+    1: 
+      dates: ['03-15', '04-24']
+      crop: 'all' 
+    2: 
+      dates: ['04-25', '06-04']
+      crop: 'all'
+    3: 
+      dates: ['06-05', '07-15'] 
+      crop: 'all'
+  variable: 'anom_swvl1' #'neg_anom_swvl1' #prcp
+  group_cols: ['location_id', 'pixel_id'] #['NOMGEO']
+  percentile_dict: 
+    'side': 'upper'
+    'layers': {
+      90: 0.4, 
+      95: 0.5, 
+      99: 1.0
+    }
+  dist: 'empirical'
+
+params_bootstrap:
+  n_iterations: 1000
+  seed: 42
+  loss_usd: 1
+
+params_quote:
+  loading_factor: 1.5  # Multiplier applied to AAL or AAL + std_dev
+  margin: 0.20
