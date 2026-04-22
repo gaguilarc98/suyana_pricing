@@ -6,6 +6,7 @@ from .n02_process_data import *
 from .n03_create_triggers import *
 from .n04_bootstrap_aep import *
 from .n05_pricing_quote import *
+from .n06_visualizations import *
 #from .n04_create_figures import *
 
 def base_pipeline(**kwargs) -> Pipeline:
@@ -62,6 +63,34 @@ def output_pipeline(**kwargs) -> Pipeline:
             outputs = ['plt_portfolio', 'plt_aep'],
             name = 'plot_aep',
             tags = ['pricing']
+        ),
+        node(
+            func = plot_anomaly_map,
+            inputs = ['ds_processed', 'gdf_aoi', 'params:params_process'],
+            outputs = 'plt_anomaly_map',
+            name = 'plot_anomaly_map',
+            tags = ['viz']
+        ),
+        node(
+            func = plot_trend_map,
+            inputs = ['ds_processed', 'params:params_process'],
+            outputs = 'plt_trend_map',
+            name = 'plot_trend_map',
+            tags = ['viz']
+        ),
+        node(
+            func = plot_trigger_frequency_map,
+            inputs = ['df_triggers', 'gdf_aoi', 'params:create_trigger'],
+            outputs = 'plt_trigger_freq_map',
+            name = 'plot_trigger_frequency_map',
+            tags = ['viz']
+        ),
+        node(
+            func = plot_anomaly_timeseries,
+            inputs = ['df_cluster', 'params:params_process'],
+            outputs = 'plt_anomaly_timeseries',
+            name = 'plot_anomaly_timeseries',
+            tags = ['viz']
         ),
     ])
 
