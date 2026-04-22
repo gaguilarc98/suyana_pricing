@@ -131,9 +131,9 @@ gdf_request:
     bbox_inches: tight
     dpi: 150
 
-'{namespace}.plt_anomaly_map':
+'{namespace}.plt_variability_map':
   type: matplotlib.MatplotlibDataset
-  filepath: ${globals:data_path}/${_arg.country}/${_arg.lead_id}/displays/anomaly_map.png
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.lead_id}/displays/variability_map.png
   save_args:
     bbox_inches: tight
     dpi: 150

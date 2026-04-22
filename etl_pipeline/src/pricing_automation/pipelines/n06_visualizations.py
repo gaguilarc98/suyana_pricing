@@ -5,10 +5,10 @@ Visualization nodes for the pricing-automation pipeline.
 
 Four plots, each saved as a PNG via the Kedro catalog:
 
-  1. plot_anomaly_map          — mean anomaly field over the full time window
-  2. plot_trend_map            — linear trend (slope) per pixel over the period
-  3. plot_trigger_frequency_map— choropleth: % of years each location triggered
-  4. plot_anomaly_timeseries   — annual mean anomaly + trend line (portfolio)
+  1. plot_variability_map       — std dev of the climate variable per pixel
+  2. plot_trend_map             — linear trend by decade with contextily basemap
+  3. plot_trigger_frequency_map — choropleth: % of years each location triggered
+  4. plot_anomaly_timeseries    — annual mean anomaly + trend line (portfolio)
 ─────────────────────────────────────────────────────────────────────────────
 """
 
@@ -20,6 +20,7 @@ import matplotlib.colors as mcolors
 import matplotlib.ticker as mticker
 import geopandas as gpd
 import xarray as xr
+import contextily as ctx
 from scipy import stats
 
 
@@ -37,22 +38,27 @@ def _anom_var(params_process: dict) -> str:
     return f"anom_{params_process['variable']}"
 
 
-def _add_colombia_border(ax, gdf_aoi):
-    """Overlay AOI geometry in light grey."""
-    gdf_aoi.boundary.plot(ax=ax, linewidth=0.4, color="#888888", zorder=3)
+def _da_to_gdf(da: xr.DataArray) -> gpd.GeoDataFrame:
+    """Convert a 2-D (lat, lon) DataArray to a GeoDataFrame of points in Web Mercator."""
+    df = da.to_dataframe(name="value").reset_index().dropna(subset=["value"])
+    gdf = gpd.GeoDataFrame(
+        df, geometry=gpd.points_from_xy(df["lon"], df["lat"]), crs="EPSG:4326"
+    )
+    return gdf.to_crs(epsg=3857)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 1. Mean anomaly map
+# 1. Variability map (std dev per pixel)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def plot_anomaly_map(
+def plot_variability_map(
     ds_processed: xr.Dataset,
     gdf_aoi: gpd.GeoDataFrame,
     params_process: dict,
 ) -> plt.Figure:
     """
-    Spatial map of the time-mean anomaly for the full analysis window.
+    Spatial map of the inter-annual standard deviation of the climate variable.
+    Shows where year-to-year variability (and thus risk) is highest.
 
     Inputs
     ------
@@ -66,32 +72,27 @@ def plot_anomaly_map(
     """
     var = _anom_var(params_process)
     period = _period_label(params_process)
-
     t0, t1 = params_process["time_window"]
-    da = ds_processed[var].sel(time=slice(t0, t1)).mean(dim="time")
 
-    vmax = float(np.nanpercentile(np.abs(da.values), 95))
-    vmax = vmax if vmax > 0 else 1.0
+    # Annual mean per pixel, then std across years
+    da_annual = ds_processed[var].sel(time=slice(t0, t1)).resample(time="1YE").mean()
+    da_std = da_annual.std(dim="time")
 
     fig, ax = plt.subplots(figsize=(9, 10))
-    im = da.plot(
+    im = da_std.plot(
         ax=ax,
-        cmap="RdBu",
-        vmin=-vmax,
-        vmax=vmax,
+        cmap="YlOrRd",
         add_colorbar=False,
         zorder=1,
     )
     cb = plt.colorbar(im, ax=ax, fraction=0.03, pad=0.02)
-    cb.set_label(f"Mean anomaly  [{params_process['variable']}]", fontsize=10)
+    cb.set_label(f"Inter-annual std dev  [{params_process['variable']}]", fontsize=10)
 
-    _add_colombia_border(ax, gdf_aoi)
+    gdf_aoi.boundary.plot(ax=ax, linewidth=0.4, color="#555555", zorder=3)
 
     ax.set_title(
-        f"Mean Anomaly Field · {period}",
-        fontsize=13,
-        fontweight="bold",
-        pad=10,
+        f"SWC Inter-annual Variability · {period}",
+        fontsize=13, fontweight="bold", pad=10,
     )
     ax.set_xlabel("Longitude", fontsize=10)
     ax.set_ylabel("Latitude", fontsize=10)
@@ -108,7 +109,7 @@ def plot_anomaly_map(
 def _pixel_trend(values: np.ndarray) -> float:
     """Return OLS slope (units/year) ignoring NaN."""
     mask = ~np.isnan(values)
-    if mask.sum() < 5:
+    if mask.sum() < 3:
         return np.nan
     x = np.arange(len(values), dtype=float)[mask]
     y = values[mask]
@@ -116,34 +117,10 @@ def _pixel_trend(values: np.ndarray) -> float:
     return float(slope)
 
 
-def plot_trend_map(
-    ds_processed: xr.Dataset,
-    params_process: dict,
-) -> plt.Figure:
-    """
-    Linear trend of the anomaly field at each grid pixel.
-    Positive = drying / warming trend; negative = wetting / cooling.
-
-    Inputs
-    ------
-    ds_processed  : xr.Dataset with 'anom_{variable}' (time, lat, lon)
-    params_process: pipeline params (variable, time_window)
-
-    Output
-    ------
-    matplotlib Figure
-    """
-    var = _anom_var(params_process)
-    period = _period_label(params_process)
-
-    t0, t1 = params_process["time_window"]
-    da = ds_processed[var].sel(time=slice(t0, t1))
-
-    # Resample to annual mean, then rechunk so time is a single chunk
+def _compute_trend_da(da: xr.DataArray) -> xr.DataArray:
+    """Annual mean → rechunk → pixel-wise OLS slope."""
     da_annual = da.resample(time="1YE").mean(skipna=True).chunk({"time": -1})
-
-    # Apply trend pixel-by-pixel using xr.apply_ufunc
-    trend = xr.apply_ufunc(
+    return xr.apply_ufunc(
         _pixel_trend,
         da_annual,
         input_core_dims=[["time"]],
@@ -152,31 +129,120 @@ def plot_trend_map(
         output_dtypes=[float],
     )
 
-    vmax = float(np.nanpercentile(np.abs(trend.values), 95))
+
+def _add_basemap(ax, crs_epsg: int = 3857):
+    """Add contextily basemap (CartoDB Positron — light, no labels)."""
+    try:
+        ctx.add_basemap(
+            ax,
+            crs=f"EPSG:{crs_epsg}",
+            source=ctx.providers.CartoDB.PositronNoLabels,
+            zoom="auto",
+            alpha=0.6,
+        )
+    except Exception:
+        pass  # skip silently if offline
+
+
+def plot_trend_map(
+    ds_processed: xr.Dataset,
+    gdf_aoi: gpd.GeoDataFrame,
+    params_process: dict,
+) -> plt.Figure:
+    """
+    Decadal linear trend maps with contextily basemap.
+
+    The full time window is split into decades; each panel shows the
+    per-pixel OLS slope (variable units / year) for that decade.
+    Positive = drying trend; negative = wetting trend.
+
+    Inputs
+    ------
+    ds_processed  : xr.Dataset with 'anom_{variable}' (time, lat, lon)
+    gdf_aoi       : GeoDataFrame with AOI boundaries
+    params_process: pipeline params (variable, time_window)
+
+    Output
+    ------
+    matplotlib Figure (one column per decade)
+    """
+    var = _anom_var(params_process)
+    t0 = pd.to_datetime(params_process["time_window"][0])
+    t1 = pd.to_datetime(params_process["time_window"][1])
+
+    # Build decade boundaries
+    decade_starts = range(
+        (t0.year // 10) * 10,
+        t1.year + 1,
+        10,
+    )
+    decades = []
+    for d0 in decade_starts:
+        d1 = d0 + 9
+        start = max(t0.year, d0)
+        end = min(t1.year, d1)
+        if end >= start + 2:  # need at least 3 years
+            decades.append((start, end))
+
+    n = len(decades)
+    if n == 0:
+        raise ValueError("Not enough data to split into decades.")
+
+    # Reproject AOI to Web Mercator for contextily
+    gdf_merc = gdf_aoi.to_crs(epsg=3857)
+
+    fig, axes = plt.subplots(1, n, figsize=(6 * n, 9), constrained_layout=True)
+    if n == 1:
+        axes = [axes]
+
+    # Compute global vmax across all decades for a shared colorbar
+    all_trends = []
+    trend_das = []
+    for (d0, d1) in decades:
+        da = ds_processed[var].sel(time=slice(f"{d0}-01-01", f"{d1}-12-31"))
+        t = _compute_trend_da(da)
+        trend_das.append(t)
+        vals = t.values
+        all_trends.append(np.nanpercentile(np.abs(vals), 95))
+    vmax = max(all_trends) if all_trends else 0.01
     vmax = vmax if vmax > 0 else 0.01
 
-    fig, ax = plt.subplots(figsize=(9, 10))
-    im = trend.plot(
-        ax=ax,
-        cmap="RdBu",
-        vmin=-vmax,
-        vmax=vmax,
-        add_colorbar=False,
-        zorder=1,
-    )
-    cb = plt.colorbar(im, ax=ax, fraction=0.03, pad=0.02)
-    cb.set_label(f"Trend  [{params_process['variable']} / year]", fontsize=10)
+    cmap = plt.cm.RdBu
+    norm = mcolors.TwoSlopeNorm(vmin=-vmax, vcenter=0, vmax=vmax)
 
-    ax.set_title(
-        f"Anomaly Trend Field · {period}",
-        fontsize=13,
-        fontweight="bold",
-        pad=10,
+    im = None
+    for ax, (d0, d1), trend in zip(axes, decades, trend_das):
+        # Project trend grid to Web Mercator via GeoDataFrame of points
+        gdf_t = _da_to_gdf(trend)
+        sc = ax.scatter(
+            gdf_t.geometry.x,
+            gdf_t.geometry.y,
+            c=gdf_t["value"],
+            cmap=cmap,
+            norm=norm,
+            s=18,
+            linewidths=0,
+            zorder=4,
+        )
+        im = sc
+
+        # Basemap + AOI border
+        _add_basemap(ax, crs_epsg=3857)
+        gdf_merc.boundary.plot(ax=ax, linewidth=0.4, color="#333333", zorder=5)
+
+        ax.set_title(f"{d0}s  ({d0}–{d1})", fontsize=12, fontweight="bold")
+        ax.set_axis_off()
+
+    # Shared colorbar
+    cb = fig.colorbar(im, ax=axes, fraction=0.02, pad=0.01, shrink=0.7)
+    cb.set_label(f"Trend  [{params_process['variable']} / year]", fontsize=11)
+    cb.ax.axhline(0, color="white", linewidth=1.5)
+
+    fig.suptitle(
+        f"SWC Decadal Trend · {t0.year}–{t1.year}",
+        fontsize=14, fontweight="bold", y=1.01,
     )
-    ax.set_xlabel("Longitude", fontsize=10)
-    ax.set_ylabel("Latitude", fontsize=10)
-    ax.tick_params(labelsize=8)
-    plt.tight_layout()
+
     plt.close(fig)
     return fig
 

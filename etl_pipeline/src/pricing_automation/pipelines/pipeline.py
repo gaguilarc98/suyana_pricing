@@ -65,15 +65,15 @@ def output_pipeline(**kwargs) -> Pipeline:
             tags = ['pricing']
         ),
         node(
-            func = plot_anomaly_map,
+            func = plot_variability_map,
             inputs = ['ds_processed', 'gdf_aoi', 'params:params_process'],
-            outputs = 'plt_anomaly_map',
-            name = 'plot_anomaly_map',
+            outputs = 'plt_variability_map',
+            name = 'plot_variability_map',
             tags = ['viz']
         ),
         node(
             func = plot_trend_map,
-            inputs = ['ds_processed', 'params:params_process'],
+            inputs = ['ds_processed', 'gdf_aoi', 'params:params_process'],
             outputs = 'plt_trend_map',
             name = 'plot_trend_map',
             tags = ['viz']
