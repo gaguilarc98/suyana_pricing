@@ -150,99 +150,39 @@ def plot_trend_map(
     params_process: dict,
 ) -> plt.Figure:
     """
-    Decadal linear trend maps with contextily basemap.
-
-    The full time window is split into decades; each panel shows the
-    per-pixel OLS slope (variable units / year) for that decade.
-    Positive = drying trend; negative = wetting trend.
-
-    Inputs
-    ------
-    ds_processed  : xr.Dataset with 'anom_{variable}' (time, lat, lon)
-    gdf_aoi       : GeoDataFrame with AOI boundaries
-    params_process: pipeline params (variable, time_window)
-
-    Output
-    ------
-    matplotlib Figure (one column per decade)
+    Full-period linear trend per pixel with contextily basemap.
+    Units: variable / decade. Positive = drying; negative = wetting.
     """
     var = _anom_var(params_process)
     t0 = pd.to_datetime(params_process["time_window"][0])
     t1 = pd.to_datetime(params_process["time_window"][1])
 
-    # Build decade boundaries
-    decade_starts = range(
-        (t0.year // 10) * 10,
-        t1.year + 1,
-        10,
-    )
-    decades = []
-    for d0 in decade_starts:
-        d1 = d0 + 9
-        start = max(t0.year, d0)
-        end = min(t1.year, d1)
-        if end >= start + 2:  # need at least 3 years
-            decades.append((start, end))
+    da = ds_processed[var].sel(time=slice(str(t0.date()), str(t1.date())))
+    trend = _compute_trend_da(da)
 
-    n = len(decades)
-    if n == 0:
-        raise ValueError("Not enough data to split into decades.")
-
-    # Reproject AOI to Web Mercator for contextily
-    gdf_merc = gdf_aoi.to_crs(epsg=3857)
-
-    fig, axes = plt.subplots(1, n, figsize=(6 * n, 9), constrained_layout=True)
-    if n == 1:
-        axes = [axes]
-
-    # Compute global vmax across all decades for a shared colorbar
-    all_trends = []
-    trend_das = []
-    for (d0, d1) in decades:
-        da = ds_processed[var].sel(time=slice(f"{d0}-01-01", f"{d1}-12-31"))
-        t = _compute_trend_da(da)
-        trend_das.append(t)
-        vals = t.values
-        all_trends.append(np.nanpercentile(np.abs(vals), 95))
-    vmax = max(all_trends) if all_trends else 0.01
+    vmax = float(np.nanpercentile(np.abs(trend.values), 95))
     vmax = vmax if vmax > 0 else 0.01
-
-    cmap = plt.cm.RdBu
     norm = mcolors.TwoSlopeNorm(vmin=-vmax, vcenter=0, vmax=vmax)
 
-    im = None
-    for ax, (d0, d1), trend in zip(axes, decades, trend_das):
-        # Project trend grid to Web Mercator via GeoDataFrame of points
-        gdf_t = _da_to_gdf(trend)
-        sc = ax.scatter(
-            gdf_t.geometry.x,
-            gdf_t.geometry.y,
-            c=gdf_t["value"],
-            cmap=cmap,
-            norm=norm,
-            s=18,
-            linewidths=0,
-            zorder=4,
-        )
-        im = sc
+    gdf_merc = gdf_aoi.to_crs(epsg=3857)
+    gdf_t = _da_to_gdf(trend)
 
-        # Basemap + AOI border
-        _add_basemap(ax, crs_epsg=3857)
-        gdf_merc.boundary.plot(ax=ax, linewidth=0.4, color="#333333", zorder=5)
+    fig, ax = plt.subplots(figsize=(9, 10))
+    sc = ax.scatter(
+        gdf_t.geometry.x, gdf_t.geometry.y,
+        c=gdf_t["value"], cmap="RdBu", norm=norm,
+        s=18, linewidths=0, zorder=4,
+    )
+    _add_basemap(ax, crs_epsg=3857)
+    gdf_merc.boundary.plot(ax=ax, linewidth=0.4, color="#333333", zorder=5)
 
-        ax.set_title(f"{d0}s  ({d0}–{d1})", fontsize=12, fontweight="bold")
-        ax.set_axis_off()
-
-    # Shared colorbar
-    cb = fig.colorbar(im, ax=axes, fraction=0.02, pad=0.01, shrink=0.7)
-    cb.set_label(f"Trend  [{params_process['variable']} / decade]", fontsize=11)
+    cb = fig.colorbar(sc, ax=ax, fraction=0.03, pad=0.02, shrink=0.85)
+    cb.set_label(f"Trend  [{params_process['variable']} / decade]", fontsize=10)
     cb.ax.axhline(0, color="white", linewidth=1.5)
 
-    fig.suptitle(
-        f"SWC Decadal Trend · {t0.year}–{t1.year}",
-        fontsize=14, fontweight="bold", y=1.01,
-    )
-
+    ax.set_title(f"SWC Trend · {t0.year}–{t1.year}", fontsize=13, fontweight="bold")
+    ax.set_axis_off()
+    plt.tight_layout()
     plt.close(fig)
     return fig
 
