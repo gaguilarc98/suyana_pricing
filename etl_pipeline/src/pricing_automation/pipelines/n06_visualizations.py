@@ -107,14 +107,14 @@ def plot_variability_map(
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _pixel_trend(values: np.ndarray) -> float:
-    """Return OLS slope (units/year) ignoring NaN."""
+    """Return OLS slope in units/decade ignoring NaN."""
     mask = ~np.isnan(values)
     if mask.sum() < 3:
         return np.nan
     x = np.arange(len(values), dtype=float)[mask]
     y = values[mask]
     slope, *_ = stats.linregress(x, y)
-    return float(slope)
+    return float(slope) * 10  # convert yr⁻¹ → dec⁻¹
 
 
 def _compute_trend_da(da: xr.DataArray) -> xr.DataArray:
@@ -235,7 +235,7 @@ def plot_trend_map(
 
     # Shared colorbar
     cb = fig.colorbar(im, ax=axes, fraction=0.02, pad=0.01, shrink=0.7)
-    cb.set_label(f"Trend  [{params_process['variable']} / year]", fontsize=11)
+    cb.set_label(f"Trend  [{params_process['variable']} / decade]", fontsize=11)
     cb.ax.axhline(0, color="white", linewidth=1.5)
 
     fig.suptitle(
