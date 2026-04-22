@@ -7,8 +7,8 @@
 # Arguments
 # Use snake_case style for uniformity e.g. costa_rica, 'swiss_re', 'bisa_seguros'
 _arg:
-  country: ${runtime_params:country, ${globals:country}} 
-  lead_id: ${runtime_params:lead_id, 'Test-Lead'}
+  country: ${runtime_params:country, ${globals:country}}
+  lead_id: ${runtime_params:lead_id, 'test1'}
   provider: ${runtime_params:provider, ${globals:provider}}
   field: ${runtime_params:field, ${globals:field}}
   version: ${runtime_params:version, ${globals:version}}

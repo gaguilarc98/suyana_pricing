@@ -2,6 +2,7 @@ from .utils import *
 
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Union
+from pathlib import Path
 from .a01_aoi_period import *
 from .a01_data_downloaders import *
 from .a01_default_registry import *
@@ -259,11 +260,13 @@ def extract_data(
     period = start_year, end_year
     if start_year is None or end_year is None:
         period = None
-        
+
     # Get lead id and provider from params_request
     lead_id = str(params_request.get("lead_id", "unknown"))
     provider = params_request.get("provider")
     field = params_request.get("field")
+    country = params_request.get("country", "")
+    data_path = params_request.get("data_path", "")
 
     params_default = get_peril_config(provider, field)
     params_request = params_default | params_request
@@ -276,5 +279,39 @@ def extract_data(
         params_request=params_request,
         period=period,
     )
-    result = DataRequestService().run(request)
-    return result.data
+    request.parse_request()
+    start_year, end_year = request.period
+    all_years = get_year_list(start_year, end_year)
+
+    # ── Cache check ────────────────────────────────────────────────────────────
+    # The catalog saves each year as:
+    #   {data_path}/{country}/{lead_id}/sources/{provider}_{field}_{year}.zarr
+    # If the zarr exists and is non-empty, skip the CDS request for that year.
+    cached: Dict[str, xr.Dataset] = {}
+    missing_years: List[int] = []
+
+    if data_path:
+        cache_dir = Path(data_path) / country / lead_id / "sources"
+        for year in all_years:
+            zarr_path = cache_dir / f"{provider}_{field}_{year}.zarr"
+            if zarr_path.exists() and any(zarr_path.iterdir()):
+                print(f"cache hit  → {year} (skipping download)")
+                cached[str(year)] = xr.open_zarr(str(zarr_path), consolidated=True)
+            else:
+                missing_years.append(year)
+    else:
+        missing_years = all_years
+
+    if missing_years:
+        print(f"downloading {len(missing_years)} year(s): {missing_years[0]}–{missing_years[-1]}")
+        request.period = (missing_years[0], missing_years[-1])
+        result = DataRequestService().run(request)
+        # Only keep years that were actually requested (avoids re-downloading extras)
+        downloaded = {k: v for k, v in result.data.items() if int(k) in missing_years}
+    else:
+        downloaded = {}
+
+    print(f"summary → {len(cached)} cached, {len(downloaded)} downloaded, "
+          f"{len(all_years) - len(cached) - len(downloaded)} failed")
+
+    return {**cached, **downloaded}
