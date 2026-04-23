@@ -7,23 +7,19 @@
 # Arguments
 # Use snake_case style for uniformity e.g. costa_rica, 'swiss_re', 'bisa_seguros'
 _arg:
-  country: ${runtime_params:country, ${globals:country}} 
-  lead_id: ${runtime_params:lead_id, 'Test-Lead'}
+  country: ${runtime_params:country, ${globals:country}}
+  lead_id: ${runtime_params:lead_id, 'test1'}
   provider: ${runtime_params:provider, ${globals:provider}}
   field: ${runtime_params:field, ${globals:field}}
   version: ${runtime_params:version, ${globals:version}}
 
 # Geometry Data
-gdf_request: 
+gdf_request:
   type: geopandas.GenericDataset
-  filepath: ${globals:data_path}/geometries/AR_departamento.parquet 
-  #filepath: /home/jupyter-gabriel/suyana/geometries/AR_departamento.gpkg 
+  filepath: /Users/daniela/Documents/suyana/pricing-automation/data/geometries/CO_municipios.parquet
   file_format: parquet
   save_args:
     compression: GZIP
-  #load_args:
-  #  driver: GPKG
-  #  encoding: UTF-8
 
 # Request Data:
 '{namespace}.dict_bounds':
@@ -63,6 +59,7 @@ gdf_request:
     mode: w
     append_dim: time
     chunks: {'time': 1800, 'lat': -1, 'lon': -1}
+    safe_chunks: false
   load_args:
     consolidated: true
 
@@ -130,6 +127,34 @@ gdf_request:
 '{namespace}.plt_aep':
   type: matplotlib.MatplotlibDataset
   filepath: ${globals:data_path}/${_arg.country}/${_arg.lead_id}/displays/aep_per_crop.png
+  save_args:
+    bbox_inches: tight
+    dpi: 150
+
+'{namespace}.plt_variability_map':
+  type: matplotlib.MatplotlibDataset
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.lead_id}/displays/variability_map.png
+  save_args:
+    bbox_inches: tight
+    dpi: 150
+
+'{namespace}.plt_trend_map':
+  type: matplotlib.MatplotlibDataset
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.lead_id}/displays/trend_map.png
+  save_args:
+    bbox_inches: tight
+    dpi: 150
+
+'{namespace}.plt_trigger_freq_map':
+  type: matplotlib.MatplotlibDataset
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.lead_id}/displays/trigger_frequency_map.png
+  save_args:
+    bbox_inches: tight
+    dpi: 150
+
+'{namespace}.plt_anomaly_timeseries':
+  type: matplotlib.MatplotlibDataset
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.lead_id}/displays/anomaly_timeseries.png
   save_args:
     bbox_inches: tight
     dpi: 150

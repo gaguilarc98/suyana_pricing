@@ -1,7 +1,7 @@
 # Parameters for already available areas
 _arg:
   country: ${runtime_params:country, ${globals:country}}
-  lead_id: ${runtime_params:lead_id, 'Test-Lead'}
+  lead_id: ${runtime_params:lead_id, 'test1'}
   provider: ${runtime_params:provider, ${globals:provider}}
   field: ${runtime_params:field, ${globals:field}}
   start_year: ${runtime_params:start_year, 1996}
@@ -10,16 +10,13 @@ _arg:
 # ERA5
 # Parameters for aoi bounding box
 params_s:
-  #location_var: 'gid' #'climate_area_id' #id_canton
-  #lon_name: 'gps_locationlongitude'
-  #lat_name: 'gps_locationlatitude'
-  include: {'depto': ['06']}
+  include: {}
   exclude: {}
-  override_gdf: true
-  minx: -60
-  maxx: -55
-  miny: -30
-  maxy: -25
+  override_gdf: false
+  minx: -81.74
+  maxx: -66.85
+  miny: -4.23
+  maxy: 13.39
 
 # Parameters for time slice
 params_t:
@@ -32,6 +29,7 @@ params_request:
   lead_id: ${_arg.lead_id}
   provider: ${_arg.provider}
   field: ${_arg.field}
+  data_path: ${globals:data_path}
       
 
 # Parameters for processing downloaded data
@@ -39,7 +37,7 @@ params_process:
   variable: 'swvl1'
   na_replace: null
   time_window:
-    - '2024-01-01'
+    - '1995-01-01'
     - '2025-12-31'
   interp_resolution: 0
   time_smooth_window: 0
