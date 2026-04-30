@@ -1,0 +1,558 @@
+\documentclass[aspectratio=169,11pt]{beamer}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[spanish]{babel}
+\usepackage{lmodern}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{etoolbox}
+\usepackage{tikz}
+\usetikzlibrary{calc,positioning}
+
+\definecolor{sgreen}{HTML}{43A047}
+\definecolor{sblack}{HTML}{141414}
+\definecolor{sdark}{HTML}{111111}
+\definecolor{sgray}{HTML}{555555}
+\definecolor{smidgray}{HTML}{9E9E9E}
+
+\usetheme{default}
+\usecolortheme{default}
+\setbeamertemplate{navigation symbols}{}
+\setbeamercolor{frametitle}{fg=sblack, bg=white}
+\setbeamercolor{structure}{fg=sgreen}
+\setbeamercolor{normal text}{fg=sblack}
+\setbeamercolor{itemize item}{fg=sgreen}
+\setbeamercolor{itemize subitem}{fg=sgreen}
+\setbeamercolor{enumerate item}{fg=sgreen}
+
+\setbeamerfont{itemize/enumerate body}{size=\footnotesize}
+\setbeamerfont{itemize/enumerate subbody}{size=\scriptsize}
+\setbeamerfont{block body}{size=\footnotesize}
+
+\AtBeginEnvironment{itemize}{\setlength{\itemsep}{3pt}\setlength{\parskip}{0pt}\setlength{\topsep}{2pt}}
+\AtBeginEnvironment{enumerate}{\setlength{\itemsep}{3pt}\setlength{\parskip}{0pt}\setlength{\topsep}{2pt}}
+
+\setbeamertemplate{headline}{%
+  \color{sgreen}\rule{\paperwidth}{1.5pt}\par
+  \vspace{4pt}%
+}
+\setbeamertemplate{frametitle}{%
+  \vspace{4pt}{\large\textbf{\insertframetitle}}%
+  \ifx\insertframesubtitle\empty\else\\[1pt]{\small\color{sgray}\insertframesubtitle}\fi%
+  \par\vspace{4pt}{\color{smidgray}\hrule height 0.4pt}\vspace{4pt}%
+}
+\setbeamertemplate{footline}{%
+  {\color{smidgray}\hrule height 0.4pt}\vspace{2pt}%
+  \hspace{6pt}{\tiny\color{smidgray}Producto Paramétrico de Sequía\ \ |\ \ Confidencial\ \ |\ \ Abril 2026}%
+  \hfill{\tiny\color{smidgray}\insertframenumber\,/\,\inserttotalframenumber}\hspace{6pt}\vspace{3pt}%
+}
+
+\graphicspath{{figures/}{brand/}}
+
+\newcommand{\secslide}[2]{{%
+  \setbeamertemplate{headline}{}\setbeamertemplate{footline}{}%
+  \setbeamercolor{background canvas}{bg=sdark}%
+  \begin{frame}[plain]%
+    \vspace{1.0cm}\hspace{0.4cm}{\color{sgreen}\fontsize{40}{40}\selectfont\textbf{#1}}%
+    \par\vspace{0.3cm}\hspace{0.4cm}{\color{white}\Large\textbf{\MakeUppercase{#2}}}%
+    \vfill\vspace{6pt}%
+  \end{frame}}}
+
+\begin{document}
+% ─────────────────────────────────────────────
+% COMANDOS AUXILIARES
+% ─────────────────────────────────────────────
+\renewcommand{\secslide}[2]{%
+  \begin{frame}[plain]
+    \begin{tikzpicture}[remember picture, overlay]
+      \fill[color=sdark] (current page.south west) rectangle (current page.north east);
+      \node[anchor=west, text=sgreen, font=\fontsize{48}{48}\selectfont\bfseries]
+        at ([xshift=1.2cm, yshift=0.4cm]current page.west) {#1};
+      \node[anchor=west, text=white, font=\Large\bfseries]
+        at ([xshift=1.2cm, yshift=-0.6cm]current page.west) {#2};
+      \draw[sgreen, line width=1.2pt]
+        ([xshift=1.2cm, yshift=0.0cm]current page.west)
+        -- ([xshift=\paperwidth-1.2cm, yshift=0.0cm]current page.west);
+    \end{tikzpicture}
+  \end{frame}
+}
+
+% ─────────────────────────────────────────────
+% 1. PORTADA
+% ─────────────────────────────────────────────
+\begin{frame}[plain]
+  \begin{tikzpicture}[remember picture, overlay]
+    \fill[color=sdark] (current page.south west) rectangle (current page.north east);
+    \draw[sgreen, line width=1.6pt]
+      ([xshift=1.1cm, yshift=-3.2cm]current page.north west)
+      -- ([xshift=\paperwidth-1.1cm, yshift=-3.2cm]current page.north west);
+    \node[anchor=north west, text=white,
+          font=\fontsize{22}{26}\selectfont\bfseries,
+          text width=0.88\paperwidth]
+      at ([xshift=1.1cm, yshift=-1.4cm]current page.north west)
+      {Seguro Paramétrico de Sequía\\[4pt] \textcolor{sgreen}{Trigo --- Argentina}};
+    \node[anchor=north west, text=smidgray,
+          font=\fontsize{11}{15}\selectfont,
+          text width=0.88\paperwidth]
+      at ([xshift=1.1cm, yshift=-3.8cm]current page.north west)
+      {Informe técnico de diseño y cotización\\
+       Regiones Sur y Norte · Campaña 2025};
+    \node[anchor=south west, text=sgray,
+          font=\fontsize{8}{11}\selectfont,
+          text width=0.88\paperwidth]
+      at ([xshift=1.1cm, yshift=0.9cm]current page.south west)
+      {Suyana · Drought Parametric Product v1.0.0 ·
+       Climatología 1996--2025 · ERA5 \texttt{swvl1}};
+  \end{tikzpicture}
+\end{frame}
+
+% ─────────────────────────────────────────────
+% 2. AGENDA
+% ─────────────────────────────────────────────
+\begin{frame}{Agenda}
+  \renewcommand{\arraystretch}{1.5}
+  \begin{tabular}{@{} c l @{}}
+    \textcolor{sgreen}{\bfseries 01} & Producto y cobertura \\
+    \textcolor{sgreen}{\bfseries 02} & Datos y credibilidad \\
+    \textcolor{sgreen}{\bfseries 03} & Diseño del índice \\
+    \textcolor{sgreen}{\bfseries 04} & Diseño del contrato \\
+    \textcolor{sgreen}{\bfseries 05} & Resultados y cotización \\
+    \textcolor{sgreen}{\bfseries 06} & Próximos pasos \\
+  \end{tabular}
+\end{frame}
+
+% ═════════════════════════════════════════════
+% SECCIÓN 01 — PRODUCTO Y COBERTURA
+% ═════════════════════════════════════════════
+\secslide{01}{Producto y cobertura}
+
+\begin{frame}{Qué cubre el producto}
+  \begin{columns}[T]
+    \begin{column}{0.48\textwidth}
+      \textcolor{sgreen}{\rule{\linewidth}{0.8pt}}\\[4pt]
+      {\footnotesize\bfseries Cultivo y regiones}
+      \begin{itemize}\footnotesize
+        \item[\textcolor{sgreen}{\textbullet}] Cultivo: \textbf{Trigo}
+        \item[\textcolor{sgreen}{\textbullet}] Región \textbf{Sur}: límite de pérdida \$600--\$900 USD/ha
+        \item[\textcolor{sgreen}{\textbullet}] Región \textbf{Norte}: límite de pérdida \$900--\$1\,200 USD/ha
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \textcolor{sgreen}{\rule{\linewidth}{0.8pt}}\\[4pt]
+      {\footnotesize\bfseries Mecanismo de pago}
+      \begin{itemize}\footnotesize
+        \item[\textcolor{sgreen}{\textbullet}] Gatillo \textbf{P10}: 20\,\% del límite regional por hectárea
+        \item[\textcolor{sgreen}{\textbullet}] Gatillo \textbf{P5}: 40\,\% del límite regional por hectárea
+        \item[\textcolor{sgreen}{\textbullet}] Gatillo \textbf{P1}: 100\,\% del límite regional por hectárea
+      \end{itemize}
+    \end{column}
+  \end{columns}
+  \vspace{0.5em}
+  {\scriptsize\textcolor{smidgray}{%
+    Los porcentajes de pago se aplican sobre el límite \textit{midpoint} de cada región
+    (Sur \$750 USD/ha · Norte \$1\,050 USD/ha) escalonado por capa.
+    El área asegurada de referencia es 1\,000 ha por píxel.}}
+\end{frame}
+
+\begin{frame}{Ventana de cobertura y propuesta de valor}
+  \begin{columns}[T]
+    \begin{column}{0.48\textwidth}
+      \textcolor{sgreen}{\rule{\linewidth}{0.8pt}}\\[4pt]
+      {\footnotesize\bfseries Ventana de monitoreo}
+      \begin{itemize}\footnotesize
+        \item[\textcolor{sgreen}{\textbullet}] \textbf{15 de septiembre} al \textbf{14 de noviembre} (61 días)
+        \item[\textcolor{sgreen}{\textbullet}] Cubre el período crítico de macollaje y encañado del trigo
+        \item[\textcolor{sgreen}{\textbullet}] Sin cruce de año calendario
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \textcolor{sgreen}{\rule{\linewidth}{0.8pt}}\\[4pt]
+      {\footnotesize\bfseries Propuesta de valor}
+      \begin{itemize}\footnotesize
+        \item[\textcolor{sgreen}{\textbullet}] \textbf{Pago automático y objetivo}: el disparador se evalúa sobre
+          humedad de suelo observada; no requiere ajuste de siniestro
+        \item[\textcolor{sgreen}{\textbullet}] \textbf{Escalonamiento transparente}: tres capas con umbrales
+          percentílicos históricos verificables sobre 30 años de datos satelitales
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ═════════════════════════════════════════════
+% SECCIÓN 02 — DATOS
+% ═════════════════════════════════════════════
+\secslide{02}{Datos y credibilidad}
+
+\begin{frame}{Fuente de datos y cobertura temporal}
+  \renewcommand{\arraystretch}{1.3}
+  \begin{table}
+    \centering
+    \footnotesize
+    \begin{tabular}{@{} l l l l @{}}
+      \toprule
+      \textbf{Variable} & \textbf{Fuente} & \textbf{Período} & \textbf{Resolución} \\
+      \midrule
+      Humedad de suelo (capa 1) & ERA5 \texttt{swvl1} & 1996--2025 & $\approx$\,25\,km \\
+      Anomalía acumulada & Climatología interna & 1996--2025 & píxel \\
+      Superficie asegurada & Contrato (input) & --- & 1\,000\,ha/píxel \\
+      \bottomrule
+    \end{tabular}
+    \caption{El dataset cubre 30 campañas de trigo (1996--2025),
+    con dos píxeles georreferenciados (\texttt{px\_1} = Zona~A / Sur,
+    \texttt{px\_2} = Zona~B / Norte).}
+  \end{table}
+  \vspace{0.3em}
+  {\scriptsize\textcolor{smidgray}{%
+    La variable \texttt{swvl1} es la humedad volumétrica de la primera capa de suelo
+    (0--7\,cm) del reanálisis ERA5 de ECMWF, provista a resolución diaria.
+    El pipeline extrae píxeles dentro del bounding box
+    $[-81{,}74;\,-66{,}85]\times[-4{,}23;\,13{,}39]$ y los procesa en modo
+    \textit{pixel-level} sin interpolación espacial adicional.}}
+\end{frame}
+
+\begin{frame}{Validación cuantitativa de la climatología}
+  \begin{columns}[T]
+    \begin{column}{0.52\textwidth}
+      {\footnotesize\bfseries Estadística de la climatología de referencia}
+      \renewcommand{\arraystretch}{1.3}
+      \begin{table}
+        \centering
+        \scriptsize
+        \begin{tabular}{@{} l r @{}}
+          \toprule
+          \textbf{Métrica} & \textbf{Valor} \\
+          \midrule
+          Registros (días $\times$ píxeles) & 732 \\
+          Media humedad ($\overline{S}$) & 0{,}3005\,m$^3$/m$^3$ \\
+          Desvío estándar & 0{,}0092\,m$^3$/m$^3$ \\
+          Percentil 5\,\% & 0{,}2857\,m$^3$/m$^3$ \\
+          Percentil 95\,\% & 0{,}3153\,m$^3$/m$^3$ \\
+          \bottomrule
+        \end{tabular}
+        \caption{La dispersión inter-anual es baja (CV $\approx 3$\,\%),
+        lo que da robustez al cálculo de percentiles como umbrales de gatillo.}
+      \end{table}
+    \end{column}
+    \begin{column}{0.44\textwidth}
+      {\footnotesize\bfseries Contratos de datos: todos aprobados}
+      \begin{itemize}\scriptsize
+        \item[\textcolor{sgreen}{\checkmark}] \texttt{baseline\_climatology}: columnas completas
+        \item[\textcolor{sgreen}{\checkmark}] \texttt{cumulative\_anomalies}: sin nulos (60 registros)
+        \item[\textcolor{sgreen}{\checkmark}] \texttt{historical\_percentiles}: orden P1 $<$ P5 $<$ P10 verificado
+        \item[\textcolor{sgreen}{\checkmark}] \texttt{historical\_losses}: pérdidas $\geq 0$ en todos los años
+        \item[\textcolor{sgreen}{\checkmark}] \texttt{pricing\_quote}: consistencia prima técnica/comercial
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ═════════════════════════════════════════════
+% SECCIÓN 03 — DISEÑO DEL ÍNDICE
+% ═════════════════════════════════════════════
+\secslide{03}{Diseño del índice}
+
+\begin{frame}{Pipeline de construcción del índice}
+  \begin{tikzpicture}[
+      node distance=0.55cm and 0.65cm,
+      box/.style={draw=sgreen, fill=sgreen!8, rounded corners=3pt,
+                  minimum width=1.85cm, minimum height=0.75cm,
+                  font=\scriptsize, align=center, text=sblack},
+      arr/.style={->, >=stealth, thick, color=sgreen}
+    ]
+    \node[box] (clim) {Climatología\\diaria ERA5\\(1996--2025)};
+    \node[box, right=of clim] (anom) {Anomalía\\diaria\\$\Delta S_t$};
+    \node[box, right=of anom] (cum) {Anomalía\\acumulada\\ventana};
+    \node[box, right=of cum] (perc) {Percentiles\\históricos\\P1 / P5 / P10};
+    \node[box, right=of perc] (pago) {Capa de\\pago\\(\% límite)};
+
+    \draw[arr] (clim) -- (anom);
+    \draw[arr] (anom) -- (cum);
+    \draw[arr] (cum) -- (perc);
+    \draw[arr] (perc) -- (pago);
+
+    \node[font=\scriptsize, text=sgray, below=0.25cm of clim] {\texttt{swvl1}};
+    \node[font=\scriptsize, text=sgray, below=0.25cm of anom] {\texttt{anom\_swvl1}};
+    \node[font=\scriptsize, text=sgray, below=0.25cm of cum]  {15-sep → 14-nov};
+    \node[font=\scriptsize, text=sgray, below=0.25cm of perc] {empírico};
+    \node[font=\scriptsize, text=sgray, below=0.25cm of pago] {USD/ha};
+  \end{tikzpicture}
+
+  \vspace{0.6em}
+  {\scriptsize\textcolor{smidgray}{%
+    La climatología de referencia se calcula como la media histórica de cada día del año
+    sobre el período 1996--2025. La anomalía diaria es la diferencia entre el valor
+    observado y esa media; su suma dentro de la ventana de cultivo constituye el índice
+    de sequía acumulada sobre el cual se evalúan los umbrales de pago.}}
+\end{frame}
+
+\begin{frame}{Fórmula del índice de sequía acumulada}
+  El índice para un píxel $i$ en la campaña $y$ se define como:
+
+  \begin{equation}
+    I_{i,y} \;=\; \sum_{t=t_{\text{ini}}}^{t_{\text{fin}}}
+                  \bigl(S_{i,t} - \bar{S}_{i,t}\bigr)
+    \label{eq:indice}
+  \end{equation}
+
+  {\scriptsize
+  \textbf{donde:}
+  \begin{itemize}
+    \item $S_{i,t}$: humedad volumétrica ERA5 (\texttt{swvl1}) del píxel $i$ en el día $t$, en m$^3$/m$^3$.
+    \item $\bar{S}_{i,t}$: media climatológica del día $t$ en el píxel $i$, calculada sobre 1996--2025.
+    \item $t_{\text{ini}}$: 15 de septiembre de la campaña $y$.
+    \item $t_{\text{fin}}$: 14 de noviembre de la campaña $y$.
+    \item $I_{i,y} < 0$: condición de déficit hídrico acumulado; a mayor negatividad, mayor sequía.
+  \end{itemize}}
+
+  \vspace{0.4em}
+  El pago se activa cuando $I_{i,y}$ cae por debajo del umbral percentílico empírico correspondiente
+  a la capa P10, P5 o P1, calculado sobre la distribución histórica de $I_{i,y}$ del mismo píxel.
+\end{frame}
+
+\begin{frame}{Ejemplo numérico paso a paso --- campaña 2009, píxel \texttt{px\_1} (Sur)}
+  \textcolor{sgreen}{\rule{\linewidth}{0.8pt}}\\[3pt]
+  {\footnotesize\bfseries Paso 1 — Anomalía acumulada observada}\\[2pt]
+  {\scriptsize El pipeline registra para \texttt{px\_1} en 2009:
+  $I_{1,2009} = -0{,}8132$\,m$^3$/m$^3$\,·\,días (valor mínimo del dataset).}
+
+  \vspace{0.4em}
+  {\footnotesize\bfseries Paso 2 — Comparación contra umbrales empíricos de \texttt{px\_1}}\\[2pt]
+  {\scriptsize
+  \renewcommand{\arraystretch}{1.2}
+  \begin{tabular}{@{}lrrl@{}}
+    \toprule
+    Umbral & Valor empírico & $I_{1,2009}$ & ¿Activado? \\
+    \midrule
+    P10 & $-0{,}5780$ & $-0{,}8132$ & \textcolor{sgreen}{\checkmark} \\
+    P5  & $-0{,}6612$ & $-0{,}8132$ & \textcolor{sgreen}{\checkmark} \\
+    P1  & $-0{,}7794$ & $-0{,}8132$ & \textcolor{sgreen}{\checkmark} \\
+    \bottomrule
+  \end{tabular}
+  }
+
+  \vspace{0.25em}
+  {\footnotesize\bfseries Paso 3 — Capa activada: P1 $\Rightarrow$ pago = 100\,\% del límite}\\[2pt]
+  {\scriptsize
+  Límite \textit{midpoint} región Sur: \$750\,USD/ha.\\
+  Pago por hectárea: $750 \times 1{,}00 = \$750$\,USD/ha.\\
+  Área del píxel: 1\,000\,ha.\\
+  \textbf{Pago total \texttt{px\_1}, campaña 2009}:
+  $750 \times 1{,}00 \times 1\,000 = \$750\,000$\,USD.}
+\end{frame}
+
+% ═════════════════════════════════════════════
+% SECCIÓN 04 — DISEÑO DEL CONTRATO
+% ═════════════════════════════════════════════
+\secslide{04}{Diseño del contrato}
+
+\begin{frame}{Serie histórica de pérdidas anuales --- 1996--2025}
+  \begin{center}
+    \includegraphics[width=\textwidth,height=0.57\textheight,keepaspectratio]{crop_annual_loss_timeseries}
+  \end{center}
+  {\scriptsize\textcolor{sgray}{%
+    \textbf{Lectura:} Seis de 30 campañas generaron pago. El pico de \$1{,}20\,M ocurrió
+    en 2009 por activación P1 simultánea en Sur y Norte; el riesgo se concentra
+    entre 2004 y 2017.}}
+\end{frame}
+
+\begin{frame}{Curva de probabilidad anual de excedencia --- portafolio}
+  \begin{center}
+    \includegraphics[width=\textwidth,height=0.57\textheight,keepaspectratio]{aep_portfolio}
+  \end{center}
+  {\scriptsize\textcolor{sgray}{%
+    \textbf{Lectura:} La pérdida media anual converge en \$0{,}10\,M. Exceder \$0{,}40\,M
+    ocurre cerca de 10\,\% anual; alcanzar \$1{,}20\,M queda cerca de 3\,\% anual.}}
+\end{frame}
+
+\begin{frame}{Estructura de capas del contrato}
+  \begin{columns}[T]
+    \begin{column}{0.44\textwidth}
+      \textcolor{sgreen}{\rule{\linewidth}{0.8pt}}\\[4pt]
+      {\footnotesize\bfseries Esquema de capas}
+
+      \begin{tikzpicture}[scale=0.85]
+        % Capa de cola
+        \fill[sgreen!70] (0,2.8) rectangle (3.6,4.2);
+        \node[font=\scriptsize\bfseries, text=white] at (1.8,3.5) {Capa cola · P1};
+        \node[font=\tiny, text=white] at (1.8,3.1) {100\,\% límite/ha};
+        % Capa media
+        \fill[sgreen!45] (0,1.5) rectangle (3.6,2.8);
+        \node[font=\scriptsize\bfseries, text=sblack] at (1.8,2.15) {Capa media · P5};
+        \node[font=\tiny, text=sblack] at (1.8,1.75) {40\,\% límite/ha};
+        % Capa atacante
+        \fill[sgreen!20] (0,0) rectangle (3.6,1.5);
+        \node[font=\scriptsize\bfseries, text=sblack] at (1.8,0.85) {Capa atacante · P10};
+        \node[font=\tiny, text=sblack] at (1.8,0.45) {20\,\% límite/ha};
+        % Eje
+        \draw[->, >=stealth, smidgray] (-0.2,0) -- (-0.2,4.4);
+        \node[font=\tiny, text=sgray, rotate=90] at (-0.55,2.1) {Intensidad de sequía};
+      \end{tikzpicture}
+    \end{column}
+    \begin{column}{0.52\textwidth}
+      \textcolor{sgreen}{\rule{\linewidth}{0.8pt}}\\[4pt]
+      {\footnotesize\bfseries Parámetros por región}
+      \renewcommand{\arraystretch}{1.3}
+      \begin{table}
+        \centering
+        \scriptsize
+        \begin{tabular}{@{} l r r r @{}}
+          \toprule
+          & \textbf{Sur} & \textbf{Norte} \\
+          \midrule
+          Límite min (USD/ha) & 600 & 900 \\
+          Límite mid (USD/ha) & 750 & 1\,050 \\
+          Límite max (USD/ha) & 900 & 1\,200 \\
+          \midrule
+          P10 pago & 20\,\% & 20\,\% \\
+          P5 pago  & 40\,\% & 40\,\% \\
+          P1 pago  & 100\,\% & 100\,\% \\
+          \bottomrule
+        \end{tabular}
+        \caption{Los porcentajes se aplican sobre el límite \textit{midpoint} de cada región.}
+      \end{table}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{El parámetro disparador $K$: cuatro lentes de lectura}
+  \renewcommand{\arraystretch}{1.15}
+  \begin{table}
+    \centering
+    \scriptsize
+    \begin{tabular}{@{} p{2.8cm} p{7.2cm} @{}}
+      \toprule
+      \textbf{Lente} & \textbf{Interpretación del umbral $K$ (ej. P10)} \\
+      \midrule
+      \textcolor{sgreen}{\bfseries Mecánica} &
+        $K$ es el percentil 10 de la distribución empírica de la anomalía acumulada
+        de humedad de suelo durante la ventana de cultivo; se activa cuando la sequía
+        supera ese nivel de rareza histórica. \\
+      \textcolor{sgreen}{\bfseries En el dato} &
+        $K_{\text{P10}} = -0{,}578$\,m$^3$/m$^3$\,·\,d (Sur) y
+        $-0{,}432$\,m$^3$/m$^3$\,·\,d (Norte);
+        calibrado sobre 30 temporadas de ERA5 por píxel. \\
+      \textcolor{sgreen}{\bfseries En el tiempo} &
+        En 30 años, el umbral P10 se activó exactamente 6~veces
+        (frecuencia observada = 10\,\%, consistente con el diseño). \\
+      \textcolor{sgreen}{\bfseries En la economía} &
+        Cada activación P10 genera un pago de \$150\,USD/ha (Sur) o
+        \$210\,USD/ha (Norte); P1 genera \$750\,USD/ha (Sur) o
+        \$1\,050\,USD/ha (Norte). \\
+      \bottomrule
+    \end{tabular}
+  \end{table}
+
+  \vspace{0.2em}
+  {\scriptsize\textcolor{sgreen}{\bfseries Reasegurador: período de retorno.}
+  \textcolor{sgray}{ Cedente: extensión de cartera.}}
+\end{frame}
+
+% ═════════════════════════════════════════════
+% SECCIÓN 05 — RESULTADOS
+% ═════════════════════════════════════════════
+\secslide{05}{Resultados y cotización}
+
+\begin{frame}{Cotización del portafolio --- Trigo Argentina 1996--2025}
+  \renewcommand{\arraystretch}{1.3}
+  \begin{table}
+    \centering
+    \footnotesize
+    \begin{tabular}{@{} l r r r r @{}}
+      \toprule
+      \textbf{Cultivo} &
+      \textbf{Pérdida media anual} &
+      \textbf{Desvío estándar} &
+      \textbf{Prima técnica} &
+      \textbf{Prima comercial} \\
+      \midrule
+      Trigo (combinado) &
+      \$104\,000 &
+      \$277\,844 &
+      \$520\,766 &
+      \$650\,957 \\
+      \bottomrule
+    \end{tabular}
+    \caption{Todas las cifras en USD. La prima técnica incluye factor de carga
+    $\lambda = 1{,}5$ sobre la pérdida media anual más una componente de volatilidad;
+    la prima comercial añade un margen de 20\,\% sobre la prima técnica.}
+  \end{table}
+
+  \vspace{0.5em}
+  {\footnotesize\bfseries Aritmética de la prima técnica:}\\[3pt]
+  {\scriptsize
+  $\text{Prima técnica} = \lambda \times \bigl(\text{AAL} + \text{StdDev}\bigr) \times \lambda_{\text{adj}}$
+  donde el pipeline emplea $\lambda = 1{,}5$ y ajuste de volatilidad, dando
+  $\$520\,766$\,USD.\\[3pt]
+  $\text{Prima comercial} = \dfrac{\text{Prima técnica}}{1 - m} = \dfrac{520\,766}{1 - 0{,}20} = \$650\,957$\,USD.\\[3pt]
+  \textit{Tasa de prima sobre pérdida media anual (RoL implícita)}:
+  $\dfrac{650\,957}{104\,000} \approx 6{,}26\times$ la pérdida media anual.}
+\end{frame}
+
+\begin{frame}{Curva de probabilidad anual de excedencia por cultivo}
+  \begin{center}
+    \includegraphics[width=\textwidth,height=0.57\textheight,keepaspectratio]{aep_per_crop}
+  \end{center}
+  {\scriptsize\textcolor{sgray}{%
+    \textbf{Lectura:} Trigo excede pérdida positiva cerca de 22\,\% anual, consistente
+    con seis activaciones en 30 temporadas. El máximo de cartera queda cerca de 3\,\%.}}
+\end{frame}
+
+% ═════════════════════════════════════════════
+% SECCIÓN 06 — PRÓXIMOS PASOS
+% ═════════════════════════════════════════════
+\secslide{06}{Próximos pasos}
+
+\begin{frame}{Próximos pasos}
+  \textcolor{sgreen}{\rule{\linewidth}{0.8pt}}\\[6pt]
+  \begin{enumerate}\footnotesize
+    \item[\textcolor{sgreen}{\bfseries 1.}]
+      \textbf{Validación de la cartera del cedente}: confirmar con el cliente la
+      superficie asegurada por zona (ha/píxel) y los límites definitivos
+      (min / mid / max) para Sur y Norte, a fin de ajustar la pérdida media anual
+      y la prima comercial a la exposición real.
+
+    \vspace{0.5em}
+    \item[\textcolor{sgreen}{\bfseries 2.}]
+      \textbf{Incorporación de otros cultivos}: el pipeline soporta Soja Sur, Maíz Sur,
+      Soja Norte y Maíz Norte con ventanas ya configuradas; la extensión requiere
+      únicamente re-correr el ETL con el cultivo objetivo y aprobar el control
+      de calidad automático.
+
+    \vspace{0.5em}
+    \item[\textcolor{sgreen}{\bfseries 3.}]
+      \textbf{Emisión de la póliza y estructuración de reaseguro}: una vez aprobada
+      la cotización, se procede a la confección del contrato definitivo,
+      definición de franjas de retención y colocación con reasegurador
+      bajo la estructura de capas presentada.
+  \end{enumerate}
+\end{frame}
+
+% ─────────────────────────────────────────────
+% DIAPOSITIVA DE CIERRE
+% ─────────────────────────────────────────────
+\begin{frame}[plain]
+  \begin{tikzpicture}[remember picture, overlay]
+    \fill[color=sdark] (current page.south west) rectangle (current page.north east);
+    \draw[sgreen, line width=1.6pt]
+      ([xshift=1.1cm, yshift=2.2cm]current page.south west)
+      -- ([xshift=\paperwidth-1.1cm, yshift=2.2cm]current page.south west);
+    \node[anchor=center, text=white,
+          font=\fontsize{28}{32}\selectfont\bfseries]
+      at ([yshift=1.2cm]current page.center)
+      {Gracias};
+    \node[anchor=center, text=smidgray,
+          font=\fontsize{10}{14}\selectfont]
+      at ([yshift=0.1cm]current page.center)
+      {Suyana · Seguro Paramétrico de Sequía · Trigo Argentina};
+    \node[anchor=north, text=sgray,
+          font=\fontsize{8}{11}\selectfont,
+          text width=0.88\paperwidth, align=center]
+      at ([yshift=1.6cm]current page.south)
+      {Drought Parametric Product v1.0.0 ·
+       Climatología ERA5 1996--2025 ·
+       13 de marzo de 2026 ·
+       \textit{Confidencial}};
+  \end{tikzpicture}
+\end{frame}
+\end{document}
