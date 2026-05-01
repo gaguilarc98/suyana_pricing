@@ -7,9 +7,8 @@ from .n03_create_triggers import *
 from .n04_bootstrap_aep import *
 from .n05_pricing_quote import *
 from .n06_visualizations import *
-#from .n04_create_figures import *
 
-def base_pipeline(**kwargs) -> Pipeline:
+def create_pipeline(**kwargs) -> Pipeline:
     return Pipeline([
         node(
             func = get_aoi,
@@ -25,10 +24,13 @@ def base_pipeline(**kwargs) -> Pipeline:
             name = 'extract_data',
             tags = ['extract']
         ),
-    ])
-
-def output_pipeline(**kwargs) -> Pipeline:
-    return Pipeline([
+        node(
+            func = process_data,
+            inputs = ['ds_request', 'gdf_aoi', 'params:params_process', 'params:params_s'],
+            outputs = ['ds_processed', 'ds_climatology'],
+            name = 'process',
+            tags = ['process']
+        ),
         node(
             func = summarize_processed_data,
             inputs = ['ds_processed', 'gdf_aoi', 'params:params_process'],
@@ -37,15 +39,22 @@ def output_pipeline(**kwargs) -> Pipeline:
             tags = ['process']
         ),
         node(
-            func = generate_triggers,
-            inputs = ['df_cluster', 'params:create_trigger', 'params:params_request'],
-            outputs = ['df_triggers', 'df_percentiles'],
-            name = 'generate_triggers',
+            func = create_index_values,
+            inputs = ['df_cluster', 'params:params_indices'],
+            outputs = ['df_indices', 'pkl_fit'],
+            name = 'create_index_values',
+            tags = ['triggers']
+        ),
+        node(
+            func = generate_payout_policy,
+            inputs = ['df_indices', 'pkl_fit', 'params:params_request', 'params:params_indices', 'params:params_contract'],
+            outputs = ['df_payouts', 'df_policy'],
+            name = 'generate_payout_policy',
             tags = ['triggers']
         ),
         node(
             func = run_bootstrap_aep,
-            inputs = ['df_triggers', 'gdf_aoi', 'params:params_bootstrap'],
+            inputs = ['df_payouts', 'gdf_aoi', 'params:params_bootstrap'],
             outputs = ['df_annual_agg', 'df_aep'],
             name = 'run_bootstrap_aep',
             tags = ['aep', 'pricing']
@@ -80,7 +89,7 @@ def output_pipeline(**kwargs) -> Pipeline:
         ),
         node(
             func = plot_trigger_frequency_map,
-            inputs = ['df_triggers', 'gdf_aoi', 'params:create_trigger'],
+            inputs = ['df_payouts', 'gdf_aoi'],
             outputs = 'plt_trigger_freq_map',
             name = 'plot_trigger_frequency_map',
             tags = ['viz']
@@ -93,33 +102,3 @@ def output_pipeline(**kwargs) -> Pipeline:
             tags = ['viz']
         ),
     ])
-
-
-def create_pipeline_moisture() -> Pipeline:
-    extract_pipeline = base_pipeline()
-    process_pipeline = Pipeline([
-        node(
-            func = process_data_request,
-            inputs = ['ds_request', 'gdf_aoi', 'params:params_process', 'params:params_s'],
-            outputs = ['ds_processed', 'ds_climatology'],
-            name = 'process_data_request',
-            tags = ['process']
-        )
-    ])
-    load_pipeline = output_pipeline()
-    return extract_pipeline + process_pipeline + load_pipeline
-
-
-def create_pipeline_temperature() -> Pipeline:
-    extract_pipeline = base_pipeline()
-    process_pipeline = Pipeline([
-        node(
-            func = process_data_temp,
-            inputs = ['ds_request', 'gdf_aoi', 'params:params_process', 'params:params_s'],
-            outputs = ['ds_processed', 'ds_climatology'],
-            name = 'process_data_request',
-            tags = ['process']
-        )
-    ])
-    load_pipeline = output_pipeline()
-    return extract_pipeline + process_pipeline + load_pipeline

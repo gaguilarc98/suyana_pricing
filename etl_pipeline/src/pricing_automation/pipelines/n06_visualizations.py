@@ -192,9 +192,8 @@ def plot_trend_map(
 # ─────────────────────────────────────────────────────────────────────────────
 
 def plot_trigger_frequency_map(
-    df_triggers: pd.DataFrame,
+    df_payouts: pd.DataFrame,
     gdf_aoi: gpd.GeoDataFrame,
-    params_trigger: dict,
 ) -> plt.Figure:
     """
     Choropleth map showing the fraction of years each location activated
@@ -210,21 +209,23 @@ def plot_trigger_frequency_map(
     ------
     matplotlib Figure
     """
-    # Detect activation columns (P90_activated, P95_activated, etc.)
-    act_cols = [c for c in df_triggers.columns if c.endswith("_activated")]
-    if not act_cols:
-        raise ValueError("df_triggers has no '*_activated' columns.")
-
-    # A location-year is "activated" if ANY layer triggered
-    df = df_triggers.copy()
-    df["any_activated"] = df[act_cols].max(axis=1)
-
+    # Detect activation by computing payouts above zero
+    df = df_payouts.copy()
+    df['any_activated'] = (df['perc_payout'] > 0).astype(int)
+ 
+    # Max per (location, year): 1 if any row activated that year
+    df = (
+        df.groupby(['location_id', 'window_year'])['any_activated']
+        .max()
+        .reset_index()
+    )
+ 
     # Fraction of years with at least one activation per location
     freq = (
-        df.groupby("location_id")["any_activated"]
+        df.groupby('location_id')['any_activated']
         .mean()
         .reset_index()
-        .rename(columns={"any_activated": "trigger_freq"})
+        .rename(columns={'any_activated': 'trigger_freq'})
     )
 
     gdf_plot = gdf_aoi.merge(freq, on="location_id", how="left")

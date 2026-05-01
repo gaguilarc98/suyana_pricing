@@ -13,7 +13,7 @@ from typing import List, Optional, Dict, Literal, Union
 from .a01_aoi_period import BoundingBox, get_year_list
 
 MIN_VALID_DAYS = 300
-WORKERS_PER_YEAR = 6
+WORKERS_PER_YEAR = 1
 
 
 #——————————————————————————————————————————————
@@ -94,22 +94,22 @@ def get_url_ucsb(
             raise NotImplementedError(f'{freq} not implemented for origin {origin}')
     elif origin == 'CHIRPS':
         if freq == 'daily':            
-            PRODUCT = f'{PATH}/CHIRPS/v3.0/daily/final/IMERGlate-v07/'
+            PRODUCT = f'{PATH}/CHIRPS/v3.0/daily/final/IMERGlate-v07'
         elif freq == 'monthly':
             PRODUCT = f'{PATH}/CHIRPS/v3.0/monthly/global/tifs'
     elif origin == 'CHIRPS-v2':
         if freq == 'daily':
-            PRODUCT = f'{PATH}/CHIRPS-2.0/whem_daily/tifs/p05/'
+            PRODUCT = f'{PATH}/CHIRPS-2.0/whem_daily/tifs/p05'  # removed trailing /
         else:
             raise NotImplementedError(f'{freq} not implemented for origin {origin}')
     elif origin == 'CHIRPS-v3-ERA5':
         if freq == 'daily':
-            PRODUCT = f'{PATH}/CHIRPS/v3.0/daily/final/rnl/'
+            PRODUCT = f'{PATH}/CHIRPS/v3.0/daily/final/rnl'     # removed trailing /
         elif freq == 'monthly':
-            PRODUCT = f'{PATH}/CHIRPS/v3.0/monthly/global/tifs/'
+            PRODUCT = f'{PATH}/CHIRPS/v3.0/monthly/global/tifs' # removed trailing /
     elif origin == 'CHIRPS-v3-IMERG':
         if freq == 'daily':
-            PRODUCT = f'{PATH}/CHIRPS/v3.0/daily/final/sat/'
+            PRODUCT = f'{PATH}/CHIRPS/v3.0/daily/final/sat'     # removed trailing /
         else:
             raise ValueError(f'{freq} not implemented for origin {origin}')
 
