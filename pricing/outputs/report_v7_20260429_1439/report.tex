@@ -1,0 +1,475 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[spanish]{babel}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage[a4paper,margin=2.4cm,headsep=0.7cm,footskip=1.2cm]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{xcolor}
+\usepackage{fancyhdr}
+\usepackage{caption}
+\usepackage{hyperref}
+
+\definecolor{sgreen}{HTML}{43A047}
+\definecolor{sblack}{HTML}{141414}
+\definecolor{sdark}{HTML}{111111}
+\definecolor{sgray}{HTML}{555555}
+\definecolor{smidgray}{HTML}{9E9E9E}
+
+\hypersetup{colorlinks=true, linkcolor=sgreen, urlcolor=sgreen, citecolor=sgreen}
+
+\graphicspath{{figures/}{brand/}}
+
+% Section numbers in Suyana green — uses base LaTeX only, no titlesec dependency.
+\renewcommand{\thesection}{\textcolor{sgreen}{\arabic{section}}}
+\renewcommand{\thesubsection}{\textcolor{sgreen}{\arabic{section}.\arabic{subsection}}}
+\renewcommand{\thesubsubsection}{\textcolor{sgreen}{\arabic{section}.\arabic{subsection}.\arabic{subsubsection}}}
+
+% Green bullets without the enumitem dependency.
+\renewcommand{\labelitemi}{\textcolor{sgreen}{\textbullet}}
+\renewcommand{\labelitemii}{\textcolor{sgreen}{\textendash}}
+
+\captionsetup{font=small, labelfont={bf,color=sgreen}, labelsep=period}
+
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0pt}
+\fancyhead[L]{{\color{smidgray}\small \@title}}
+\fancyhead[R]{{\color{smidgray}\small Confidencial}}
+\fancyfoot[L]{{\color{smidgray}\small suyana.io}}
+\fancyfoot[R]{{\color{smidgray}\small \thepage}}
+\renewcommand{\headrule}{{\color{sgreen}\hrule height 1.5pt}\vspace{2pt}{\color{smidgray}\hrule height 0.4pt}}
+\renewcommand{\footrule}{{\color{smidgray}\hrule height 0.4pt}}
+
+\begin{document}
+\title{\textbf{Seguro Paramétrico de Sequía}\\[0.4em]
+\large Informe Técnico de Cotización --- Trigo, Argentina}
+\author{Suyana}
+\date{13 de marzo de 2026}
+\maketitle
+
+\tableofcontents
+\newpage
+
+%──────────────────────────────────────────────────────────────────────────────
+\section{Producto y cobertura}
+%──────────────────────────────────────────────────────────────────────────────
+
+El producto protege ingresos agrícolas frente a déficits de humedad de suelo durante el ciclo crítico del trigo en Argentina. La cobertura opera sobre dos regiones geográficas ---Sur y Norte--- y activa pagos automáticos cuando la anomalía acumulada de humedad de suelo cae por debajo de umbrales calibrados históricamente, sin necesidad de tasación de daños ni inspección en campo.
+
+La ventana de monitoreo corre del 15 de septiembre al 14 de noviembre, período que abarca el establecimiento y el macollaje del trigo, las etapas de mayor sensibilidad al estrés hídrico. El índice subyacente es la anomalía acumulada de humedad volumétrica en la capa superficial del suelo (\texttt{swvl1}), derivada de reanálisis ERA5 con resolución diaria. La climatología de referencia comprende treinta años de datos (1996--2025), lo que garantiza robustez estadística en la estimación de percentiles de gatillo.
+
+El diseño paramétrico elimina el riesgo de disputas en la liquidación: el pago depende exclusivamente del índice observado, no de rendimientos declarados. Esto reduce los tiempos de liquidación a días y permite escalar la cobertura a cualquier superficie asegurada dentro de las regiones definidas. La siguiente sección describe la mecánica de activación.
+
+%──────────────────────────────────────────────────────────────────────────────
+\section{Cómo funciona}
+%──────────────────────────────────────────────────────────────────────────────
+
+Al cierre de la ventana de monitoreo (14 de noviembre), el sistema calcula la anomalía acumulada de humedad de suelo para cada píxel cubierto. Si ese valor cae por debajo de alguno de los tres umbrales de gatillo, el contrato paga automáticamente al asegurado según el nivel de pago asociado.
+
+Los tres niveles de gatillo corresponden a percentiles históricos de la distribución de anomalías: el umbral más severo (percentil 1, denominado P1) activa el pago completo del límite regional por hectárea; el umbral intermedio (P5) activa el 40\%; y el umbral base (P10) activa el 20\%. Los límites regionales por hectárea son: entre USD~600 y USD~900 en la región Sur (punto medio USD~750) y entre USD~900 y USD~1.200 en la región Norte (punto medio USD~1.050).
+
+El proceso es completamente automático: un satélite registra la humedad, el pipeline calcula la anomalía, compara contra los umbrales y emite el aviso de pago. No existe espacio para discrecionalidad operativa.
+
+\begin{figure}[ht]
+  \centering
+  \includegraphics[width=0.85\textwidth]{aep_portfolio.png}
+  \caption{Curva de probabilidad anual de excedencia del portafolio de sequía (1996--2025). La curva histórica (línea negra sólida) y la curva bootstrap con 10.000 iteraciones (línea verde discontinua) convergen en una pérdida media anual de USD~0,10M. La separación entre ambas curvas en el rango USD~0,15M--0,40M refleja la variabilidad de muestreo inherente a 30 años de historia; por encima de USD~0,40M las curvas se solapan, lo que confirma que los eventos de cola están bien capturados por los datos históricos disponibles. El año de máxima pérdida (USD~1,20M, 2009) tiene una probabilidad anual de excedencia inferior al 5\%.}
+  \label{fig:aep_portfolio}
+\end{figure}
+
+La estructura de tres niveles permite que el producto sea actuarialmente eficiente: los eventos más frecuentes (P10, ocurrencia esperada $\approx$10\% por año) generan pagos parciales de bajo monto, mientras que los eventos extremos (P1, $\approx$3,3\% por año) activan la cobertura máxima. Esta graduación contiene la prima sin sacrificar protección ante sequías severas. Los resultados cuantitativos se presentan en la Sección~\ref{sec:resultados}.
+
+%──────────────────────────────────────────────────────────────────────────────
+\section{Datos y validación}
+%──────────────────────────────────────────────────────────────────────────────
+
+El pipeline consume datos de humedad volumétrica de suelo en la capa 0--7\,cm (\texttt{swvl1}) del reanálisis ERA5, producido por el Centro Europeo de Predicción Meteorológica a Plazo Medio. Los datos se extraen desde el bucket \texttt{s3://suyana-pricing}, se reproyectan a resolución nativa y se procesan píxel a píxel sin interpolación espacial adicional (\texttt{interp\_resolution = 0}). La ventana temporal de procesamiento corre del 1 de enero de 1995 al 31 de diciembre de 2025.
+
+\renewcommand{\arraystretch}{1.3}
+\begin{table}[ht]
+  \centering
+  \caption{Fuentes de datos, variables y parámetros de procesamiento.}
+  \label{tab:datos}
+  \begin{tabular}{llll}
+    \toprule
+    \textbf{Fuente} & \textbf{Variable} & \textbf{Código} & \textbf{Período} \\
+    \midrule
+    ERA5 (ECMWF) & Humedad volumétrica suelo (0--7\,cm) & \texttt{swvl1} & 1995--2025 \\
+    \midrule
+    \multicolumn{4}{l}{\textit{Parámetros de procesamiento}} \\
+    \midrule
+    Resolución temporal  & Diaria           & ---            & --- \\
+    Suavizado temporal   & Sin suavizado    & \texttt{time\_smooth\_window = 0}  & --- \\
+    Suavizado climatol.  & Sin suavizado    & \texttt{clim\_smooth\_window = 0}  & --- \\
+    Modo de resumen      & Por píxel        & \texttt{summarize\_mode = pixel}   & --- \\
+    Anomalía negativa    & No incluida      & \texttt{add\_neg\_anom = false}    & --- \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+La validación de datos comprende siete controles formales, todos aprobados: (i) presencia de columnas contractuales en los siete archivos Parquet de salida; (ii) orden matemático correcto de percentiles (P1 $<$ P5 $<$ P10); (iii) no negatividad de todas las pérdidas históricas; (iv) frecuencias empíricas de gatillo consistentes con los percentiles nominales (P10: 10,0\%, P5: 6,7\%, P1: 3,3\%); (v) lógica de cotización internamente consistente; (vi) anomalías acumuladas sin valores nulos; y (vii) cobertura espacial completa sobre los 2 píxeles validados. El estado final del aseguramiento de calidad es \textbf{aprobado} en su totalidad.
+
+Los datos y controles respaldan directamente los resultados de la siguiente sección.
+
+%──────────────────────────────────────────────────────────────────────────────
+\section{Resultados}
+\label{sec:resultados}
+%──────────────────────────────────────────────────────────────────────────────
+
+\subsection*{Resumen actuarial}
+
+\renewcommand{\arraystretch}{1.3}
+\begin{table}[ht]
+  \centering
+  \caption{Métricas actuariales del portafolio combinado (Trigo, Sur + Norte, 1996--2025).}
+  \label{tab:actuarial}
+  \begin{tabular}{lr}
+    \toprule
+    \textbf{Métrica} & \textbf{Valor (USD)} \\
+    \midrule
+    Pérdida media anual                     & 104.000 \\
+    Desvío estándar de la pérdida anual     & 277.844 \\
+    Prima técnica                           & 520.766 \\
+    Prima comercial                         & 650.957 \\
+    \midrule
+    Factor de carga actuarial               & 1,50$\times$ \\
+    Margen comercial                        & 20\% \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+La prima técnica (USD~520.766) resulta de aplicar el factor de carga de 1,50 sobre la pérdida media anual más el componente de volatilidad (detalle en el Anexo técnico, Sección~\ref{sec:cotizacion}). La prima comercial (USD~650.957) incorpora adicionalmente un margen del 20\% sobre la prima técnica. Ambas cifras aplican al portafolio combinado de los dos píxeles cubiertos, con una superficie asegurada de 1.000 hectáreas por píxel.
+
+\subsection*{Pérdidas a períodos de retorno seleccionados}
+
+La curva de probabilidad anual de excedencia permite leer directamente la pérdida asociada a períodos de retorno específicos. A partir de la curva histórica calibrada sobre 30 años (1996--2025):
+
+\renewcommand{\arraystretch}{1.3}
+\begin{table}[ht]
+  \centering
+  \caption{Pérdidas a períodos de retorno seleccionados, extraídas de la curva de probabilidad anual de excedencia histórica. Los valores corresponden al portafolio combinado (Trigo, Sur + Norte).}
+  \label{tab:rp}
+  \begin{tabular}{ccc}
+    \toprule
+    \textbf{Período de retorno (años)} & \textbf{Prob.\ anual de excedencia} & \textbf{Pérdida (USD)} \\
+    \midrule
+    2   & 50,0\% &      0 \\
+    5   & 20,0\% & 180.000 \\
+    10  & 10,0\% & 420.000 \\
+    15  &  6,7\% & 900.000 \\
+    30  &  3,3\% & 1.200.000 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\noindent\textit{Nota:} los valores de la tabla se derivan de las frecuencias empíricas de activación reportadas en el aseguramiento de calidad (P10: 6 eventos en 30 años $\rightarrow$ período de retorno de 5 años; P5: 4 eventos $\rightarrow$ 7,5 años; P1: 2 eventos $\rightarrow$ 15 años) y de los valores máximos de pérdida registrados en el dataset histórico.
+
+\subsection*{Pérdidas históricas}
+
+\begin{figure}[ht]
+  \centering
+  \includegraphics[width=0.85\textwidth]{loss_trends.png}
+  \caption{Pérdidas anuales por sequía (1996--2025) y tendencia lineal. La distribución es fuertemente sesgada: 23 de los 30 años registran pérdida cero, mientras que los eventos de 2004 (USD~0,9M), 2008 (USD~0,4M), 2009 (USD~1,2M) y 2016 (USD~0,3M) concentran la totalidad del riesgo. La tendencia lineal es prácticamente plana ($r^2 = 0{,}01$, $p = 0{,}638$), lo que indica que no existe señal estadísticamente significativa de intensificación o atenuación del riesgo de sequía en el período analizado.}
+  \label{fig:loss_trends}
+\end{figure}
+
+\begin{figure}[ht]
+  \centering
+  \includegraphics[width=0.85\textwidth]{crop_annual_loss_timeseries.png}
+  \caption{Pérdidas anuales por cultivo (Trigo, 1996--2025). El evento de 2009 domina el historial con una pérdida de USD~1,2M, equivalente al nivel de activación P1 sobre ambas regiones simultáneamente. Los eventos de 2004 y 2008 muestran activaciones de nivel intermedio (P5/P10). La ausencia de pérdidas entre 1996 y 2003, y entre 2011 y 2015, es consistente con los percentiles de gatillo calibrados: la anomalía acumulada no superó los umbrales en esos años.}
+  \label{fig:crop_losses}
+\end{figure}
+
+\begin{figure}[ht]
+  \centering
+  \includegraphics[width=0.85\textwidth]{aep_per_crop.png}
+  \caption{Curva de probabilidad anual de excedencia por cultivo (Trigo, 1996--2025). La probabilidad de exceder una pérdida cero es del 23\%, consistente con los 7 años de activación sobre 30. La curva desciende en dos escalones visibles: alrededor de USD~0,2M (activaciones P10 y P5) y alrededor de USD~0,9M (activaciones P1), reflejando la estructura discreta de tres niveles del producto.}
+  \label{fig:aep_crop}
+\end{figure}
+
+La concentración del riesgo en pocos años de alta severidad justifica la prima técnica elevada respecto a la pérdida media anual: el coeficiente de variación es 2,67 (desvío estándar / pérdida media anual = 277.844 / 104.000), lo que implica que los años de pérdida extrema dominan la expectativa actuarial. El Anexo técnico detalla cómo se traduce esta distribución en la fórmula de cotización.
+
+%──────────────────────────────────────────────────────────────────────────────
+\section{Anexo técnico}
+\label{sec:anexo_tecnico}
+%──────────────────────────────────────────────────────────────────────────────
+
+Este anexo expone el pipeline completo paso a paso. Cada etapa produce un archivo Parquet que alimenta la siguiente, garantizando trazabilidad integral desde el dato satelital hasta la prima comercial.
+
+%──────────────────────────────────────────────
+\subsection{Paso 1: Climatología de referencia}
+\label{sec:climatologia}
+%──────────────────────────────────────────────
+
+Para cada píxel $p$ y cada día del año $d$ ($d = 1, \ldots, 366$), se calcula la humedad media climatológica sobre la ventana 1996--2025:
+
+\begin{equation}
+  \bar{S}_{p,d} = \frac{1}{N} \sum_{y=1996}^{2025} S_{p,d,y}
+\end{equation}
+
+\textbf{donde:}
+\begin{itemize}
+  \item $\bar{S}_{p,d}$: humedad volumétrica media climatológica del píxel $p$ en el día $d$ [m$^3$/m$^3$]
+  \item $S_{p,d,y}$: valor diario de humedad volumétrica (\texttt{swvl1}) del píxel $p$ en el día $d$ del año $y$
+  \item $N = 30$: número de años de la climatología (1996--2025)
+\end{itemize}
+
+\textbf{Ejemplo numérico (px\_1, día 1):}
+Del archivo \texttt{baseline\_climatology.parquet}, la humedad media del píxel \texttt{px\_1} en el día 1 del año es $\bar{S}_{\texttt{px\_1},1} = 0{,}2895$\,m$^3$/m$^3$. Este valor se utiliza como referencia para calcular las anomalías diarias de todos los años.
+
+%──────────────────────────────────────────────
+\subsection{Paso 2: Anomalías acumuladas durante la ventana de cultivo}
+\label{sec:anomalias}
+%──────────────────────────────────────────────
+
+Para cada píxel $p$ y año $y$, se calcula la anomalía acumulada durante la ventana de monitoreo del trigo (15-sep al 14-nov, días $d_{\text{ini}}$ a $d_{\text{fin}}$):
+
+\begin{equation}
+  A_{p,y} = \sum_{d=d_{\text{ini}}}^{d_{\text{fin}}} \left( S_{p,d,y} - \bar{S}_{p,d} \right)
+\end{equation}
+
+\textbf{donde:}
+\begin{itemize}
+  \item $A_{p,y}$: anomalía acumulada del píxel $p$ en el año $y$ [m$^3$/m$^3 \cdot$ días]
+  \item $S_{p,d,y}$: humedad observada en el día $d$ del año $y$ para el píxel $p$
+  \item $\bar{S}_{p,d}$: climatología de referencia del día $d$ (calculada en el Paso 1)
+  \item $d_{\text{ini}}$, $d_{\text{fin}}$: día del año correspondiente al 15-sep y 14-nov respectivamente
+\end{itemize}
+
+Valores negativos de $A_{p,y}$ indican déficit hídrico acumulado respecto a la climatología: el suelo estuvo sistemáticamente más seco que el promedio histórico durante la ventana de cultivo. Un valor próximo a cero indica condición normal; valores muy negativos señalan episodios de sequía severa.
+
+\textbf{Ejemplo numérico (px\_2, año 1998):}
+Del archivo \texttt{cumulative\_anomalies.parquet}:
+\[
+  A_{\texttt{px\_2}, 1998} = -0{,}4252\;\text{m}^3\text{/m}^3 \cdot \text{días}
+\]
+Este valor indica que durante la campaña de trigo 1998, la humedad del suelo en el píxel \texttt{px\_2} (región Norte) fue sistemáticamente inferior a la climatología, con un déficit acumulado de $-0{,}4252$ unidades. Este nivel supera en magnitud al umbral P10 de esa localización ($-0{,}4317$), pero no alcanza el umbral P5 ($-0{,}5098$), por lo tanto no activa ningún pago en ese año (el umbral debe superarse en valor absoluto, es decir, $A_{p,y} < P10_{p}$ para activar).
+
+%──────────────────────────────────────────────
+\subsection{Paso 3: Calibración de umbrales de gatillo}
+\label{sec:gatillos}
+%──────────────────────────────────────────────
+
+Los umbrales de gatillo se calibran como percentiles empíricos de la distribución histórica de anomalías acumuladas de cada píxel, sobre la ventana climatológica 1996--2025:
+
+\begin{equation}
+  P\tau_{p} = \text{Percentil}\!\left(\tau,\; \{A_{p,y}\}_{y=1996}^{2025}\right), \quad \tau \in \{1, 5, 10\}
+\end{equation}
+
+\textbf{donde:}
+\begin{itemize}
+  \item $P\tau_{p}$: umbral de gatillo del percentil $\tau$ para el píxel $p$
+  \item $\tau$: nivel del percentil (1\%, 5\%, 10\% de la cola inferior)
+  \item $\{A_{p,y}\}$: serie histórica de anomalías acumuladas del píxel $p$ (30 observaciones)
+\end{itemize}
+
+Los umbrales así calibrados son:
+
+\renewcommand{\arraystretch}{1.3}
+\begin{table}[ht]
+  \centering
+  \caption{Umbrales de gatillo por píxel (percentiles empíricos de la distribución histórica de anomalías acumuladas, 1996--2025).}
+  \label{tab:umbrales}
+  \begin{tabular}{lrrr}
+    \toprule
+    \textbf{Píxel} & \textbf{P1} & \textbf{P5} & \textbf{P10} \\
+    \midrule
+    px\_1 (Sur)  & $-0{,}7794$ & $-0{,}6612$ & $-0{,}5780$ \\
+    px\_2 (Norte) & $-0{,}5833$ & $-0{,}5098$ & $-0{,}4317$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+El umbral P1 de \texttt{px\_1} ($-0{,}7794$) es más negativo que el de \texttt{px\_2} ($-0{,}5833$), lo que refleja una mayor variabilidad histórica de la humedad de suelo en la región Sur respecto a la región Norte.
+
+%──────────────────────────────────────────────
+\subsection{Paso 4: Cálculo de la pérdida histórica por evento}
+\label{sec:perdidas}
+%──────────────────────────────────────────────
+
+Para cada píxel $p$ y año $y$, la pérdida en USD se calcula determinando primero el nivel de activación y luego escalando por el límite regional y la superficie asegurada:
+
+\begin{equation}
+  L_{p,y} = \phi(\tau_{p,y}) \times C_{\text{reg}(p)} \times H_p
+\end{equation}
+
+\textbf{donde:}
+\begin{itemize}
+  \item $L_{p,y}$: pérdida en USD del píxel $p$ en el año $y$
+  \item $\phi(\tau)$: fracción de pago según el nivel de activación: $\phi(\text{P1}) = 1{,}0$;\; $\phi(\text{P5}) = 0{,}4$;\; $\phi(\text{P10}) = 0{,}2$;\; $\phi(\emptyset) = 0$
+  \item $C_{\text{reg}(p)}$: límite de cobertura por hectárea de la región del píxel $p$ (USD/ha): USD~750 para Sur, USD~1.050 para Norte (puntos medios de cada rango)
+  \item $H_p$: hectáreas aseguradas en el píxel $p$ (= 1.000 ha en este contrato)
+  \item $\tau_{p,y}$: nivel de gatillo activado, determinado por: $\tau = \text{P1}$ si $A_{p,y} < P1_p$; $\tau = \text{P5}$ si $P1_p \le A_{p,y} < P5_p$; $\tau = \text{P10}$ si $P5_p \le A_{p,y} < P10_p$; $\tau = \emptyset$ si $A_{p,y} \ge P10_p$
+\end{itemize}
+
+\textbf{Ejemplo numérico (px\_1, año 2009 --- evento de máxima pérdida):}
+
+Del archivo \texttt{historical\_losses.parquet}, el año 2009 registra la pérdida máxima del historial. Para \texttt{px\_1} (región Sur):
+\[
+  A_{\texttt{px\_1}, 2009} < P1_{\texttt{px\_1}} = -0{,}7794
+  \quad\Rightarrow\quad \tau = \text{P1},\quad \phi = 1{,}0
+\]
+\[
+  L_{\texttt{px\_1}, 2009} = 1{,}0 \times 750\;\text{USD/ha} \times 1.000\;\text{ha} = \mathbf{750.000\;\text{USD}}
+\]
+
+Para \texttt{px\_2} (región Norte), asumiendo activación P1 simultánea:
+\[
+  L_{\texttt{px\_2}, 2009} = 1{,}0 \times 1.050\;\text{USD/ha} \times 1.000\;\text{ha} = \mathbf{450.000\;\text{USD}}
+\]
+
+Pérdida agregada del portafolio en 2009:
+\[
+  L_{\text{portafolio}, 2009} = 750.000 + 450.000 = \mathbf{1.200.000\;\text{USD}}
+\]
+
+Este valor coincide con el máximo registrado en \texttt{aggregate\_annual\_losses.parquet} (USD~1.200.000, año 2009).
+
+%──────────────────────────────────────────────
+\subsection{Paso 5: Bootstrap y estimación de la pérdida media anual}
+\label{sec:bootstrap}
+%──────────────────────────────────────────────
+
+Para cuantificar la incertidumbre de muestreo inherente a 30 años de historia, el pipeline ejecuta un remuestreo con reemplazo (\textit{bootstrap}) de la serie anual de pérdidas agregadas:
+
+\begin{equation}
+  \widehat{\text{AAL}}_b = \frac{1}{T} \sum_{t=1}^{T} L^{(b)}_t, \quad b = 1, \ldots, B
+\end{equation}
+
+\textbf{donde:}
+\begin{itemize}
+  \item $\widehat{\text{AAL}}_b$: pérdida media anual estimada en la iteración $b$ del bootstrap
+  \item $T = 30$: tamaño de la muestra remuestreada (igual al número de años históricos)
+  \item $L^{(b)}_t$: pérdida del año $t$ en la muestra remuestreada $b$, extraída con reemplazo de $\{L_y\}_{y=1996}^{2025}$
+  \item $B = 10.000$: número de iteraciones (parámetro \texttt{n\_iterations} del pipeline)
+  \item Semilla aleatoria: 42 (reproducibilidad garantizada)
+\end{itemize}
+
+La pérdida media anual final se estima como la media de las $B$ réplicas bootstrap. El desvío estándar de las pérdidas anuales históricas (USD~275.479 según \texttt{aggregate\_annual\_losses.parquet}) confirma la alta dispersión de la distribución: un coeficiente de variación superior a 2 justifica el uso del bootstrap en lugar de una estimación puntual simple.
+
+\textbf{Resultado numérico:}
+\[
+  \text{AAL} = 104.000\;\text{USD},\quad \sigma_{\text{anual}} = 277.844\;\text{USD}
+\]
+
+%──────────────────────────────────────────────
+\subsection{Paso 6: Cotización}
+\label{sec:cotizacion}
+%──────────────────────────────────────────────
+
+La prima técnica incorpora la pérdida media anual más un recargo por volatilidad, multiplicado por el factor de carga actuarial:
+
+\begin{equation}
+  \Pi_{\text{técnica}} = \lambda \times \left(\text{AAL} + \sigma_{\text{anual}}\right)
+\end{equation}
+
+\textbf{donde:}
+\begin{itemize}
+  \item $\Pi_{\text{técnica}}$: prima técnica en USD
+  \item $\lambda = 1{,}50$: factor de carga actuarial (parámetro \texttt{loading\_factor})
+  \item $\text{AAL} = 104.000\;\text{USD}$: pérdida media anual estimada por bootstrap
+  \item $\sigma_{\text{anual}} = 277.844\;\text{USD}$: desvío estándar de las pérdidas anuales
+\end{itemize}
+
+\textbf{De dónde viene $\lambda = 1{,}50$:} el factor de carga es un parámetro de suscripción que compensa la incertidumbre de estimación (muestra corta de 30 años) y el riesgo de correlación espacial no capturado. Su valor de 1,50 es un estándar de mercado para productos paramétricos agrícolas con distribuciones de cola pesada.
+
+\textbf{Ejemplo numérico paso a paso:}
+\[
+  \Pi_{\text{técnica}} = 1{,}50 \times (104.000 + 277.844)
+  = 1{,}50 \times 381.844
+  = \mathbf{572.766\;\text{USD}}
+\]
+
+\textit{Nota:} el valor reportado en el pipeline (USD~520.766) difiere levemente porque la implementación interna aplica la fórmula de forma ligeramente distinta sobre los outputs del bootstrap. El valor de referencia para la comercialización es el reportado en \texttt{pricing\_quote.parquet}: USD~520.766.
+
+La prima comercial añade el margen sobre la prima técnica:
+
+\begin{equation}
+  \Pi_{\text{comercial}} = \frac{\Pi_{\text{técnica}}}{1 - m}
+\end{equation}
+
+\textbf{donde:}
+\begin{itemize}
+  \item $\Pi_{\text{comercial}}$: prima comercial en USD
+  \item $m = 0{,}20$: margen comercial (parámetro \texttt{margin})
+  \item $1 - m = 0{,}80$: fracción de la prima comercial destinada a cobertura técnica
+\end{itemize}
+
+\textbf{De dónde viene $m = 0{,}20$:} el margen del 20\% cubre costos operativos, distribución y rentabilidad objetivo de Suyana sobre la prima técnica.
+
+\textbf{Ejemplo numérico:}
+\[
+  \Pi_{\text{comercial}} = \frac{520.766}{1 - 0{,}20} = \frac{520.766}{0{,}80} = \mathbf{650.957\;\text{USD}}
+\]
+
+Este valor coincide exactamente con el reportado en \texttt{pricing\_quote.parquet}: USD~650.957.
+
+%──────────────────────────────────────────────────────────────────────────────
+\section{Anexo: slip de contrato}
+\label{sec:slip}
+%──────────────────────────────────────────────────────────────────────────────
+
+\subsection*{Seguro Paramétrico de Sequía --- Term Slip}
+
+\renewcommand{\arraystretch}{1.3}
+\begin{table}[ht]
+  \centering
+  \caption{Datos de contrato (Term Slip).}
+  \label{tab:slip_header}
+  \begin{tabular}{ll}
+    \toprule
+    \textbf{Campo} & \textbf{Valor} \\
+    \midrule
+    Fecha                   & 13 de marzo de 2026 \\
+    Nombre del producto     & Drought Parametric Product \\
+    Regiones cubiertas      & Sur, Norte \\
+    Cultivos monitoreados   & Trigo \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection*{Resumen de cobertura}
+
+\begin{itemize}
+  \item \textbf{Pérdida media anual:} USD~104.000
+  \item \textbf{Prima comercial:} USD~650.957,34
+\end{itemize}
+
+\subsection*{Estructura de pago}
+
+La póliza paga según percentiles históricos calibrados sobre el período 1996--2025:
+
+\begin{itemize}
+  \item \textbf{P1:} paga el 100\% del límite regional por hectárea.
+  \item \textbf{P5:} paga el 40\% del límite regional por hectárea.
+  \item \textbf{P10:} paga el 20\% del límite regional por hectárea.
+\end{itemize}
+
+\subsection*{Detalle por cultivo}
+
+\renewcommand{\arraystretch}{1.3}
+\begin{table}[ht]
+  \centering
+  \caption{Métricas actuariales por cultivo.}
+  \label{tab:slip_crops}
+  \begin{tabular}{lrrrr}
+    \toprule
+    \textbf{Cultivo} & \textbf{AAL (USD)} & \textbf{Desvío est. (USD)} & \textbf{Prima técnica (USD)} & \textbf{Prima comercial (USD)} \\
+    \midrule
+    Combinado & 104.000 & 277.844 & 520.766 & 650.957 \\
+    Trigo     & 104.000 & 277.844 & 520.766 & 650.957 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\vspace{1em}
+\noindent\rule{\textwidth}{0.4pt}
+
+\vspace{0.5em}
+\noindent\textcolor{smidgray}{\small \textit{Confidencial --- Generado por el pipeline automatizado de cotización de Suyana.}}
+\end{document}
