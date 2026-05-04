@@ -37,7 +37,7 @@ from matplotlib.colors import LinearSegmentedColormap, ListedColormap
 
 ## STATISTICS LIBRARIES
 from scipy import stats
-from scipy.stats import f, norm, t, ks_2samp, genextreme, rankdata
+#from scipy.stats import f, norm, t, ks_2samp, genextreme, rankdata, beta
 from scipy.signal import butter, filtfilt
 #import statsmodels.api as sm
 #import statsmodels.formula.api as sfm
@@ -82,7 +82,7 @@ def get_coordinates(ds: xr.Dataset):
 
     lon_coord = {'lon', 'Lon', 'longitude', 'Longitude', 'x', 'X'}.intersection(set(ds.dims))
     lat_coord = {'lat', 'Lat', 'latitude', 'Latitude', 'y', 'Y'}.intersection(set(ds.dims))
-    time_coord = {'time', 'Time', 'date', 'Date'}.intersection(set(ds.dims))
+    time_coord = {'time', 'valid_time', 'Time', 'date', 'Date'}.intersection(set(ds.dims))
 
     if len(lon_coord)>0:
         lon_var = lon_coord.pop()

@@ -10,7 +10,7 @@ _arg:
 # ERA5
 # Parameters for aoi bounding box
 params_s:
-  include: {}
+  include: {'DEPTO': ['CASANARE', 'META']}
   exclude: {}
   override_gdf: false
   minx: -81.74
@@ -34,39 +34,50 @@ params_request:
 
 # Parameters for processing downloaded data
 params_process:
-  variable: 'swvl1'
+  variable: ${_arg.field}
   na_replace: null
   time_window:
-    - '1995-01-01'
+    - '2006-01-01'
     - '2025-12-31'
   interp_resolution: 0
   time_smooth_window: 0
   climatology_smooth_window: 0
-  summarize_mode: 'pixel' #'nearest' #'within'
-  add_neg_anom: false
+  summarize_mode: 'within' #'nearest' #'within'
+  add_neg_anom: false #true
+  threshold: -1.5
+  num_days: 2
+  side: 'lower'
   
 # Parameters for creating triggers
-create_trigger:
-  windows:
-    1: 
-      dates: ['03-15', '04-24']
-      crop: 'all' 
-    2: 
-      dates: ['04-25', '06-04']
-      crop: 'all'
-    3: 
-      dates: ['06-05', '07-15'] 
-      crop: 'all'
-  variable: 'anom_swvl1' #'neg_anom_swvl1' #prcp
-  group_cols: ['location_id', 'pixel_id'] #['NOMGEO']
-  percentile_dict: 
-    'side': 'upper'
-    'layers': {
-      90: 0.4, 
-      95: 0.5, 
-      99: 1.0
-    }
-  dist: 'empirical'
+params_indices:
+  variable: 'prcp'
+  group_cols: ['location_id']
+  dist: 'gamma'
+  start_time: '1996-01-01'
+  windows: 
+    1: ['05-20', '09-30']   # main growing season
+    #2: ['08-01', '01-31']   # second season (crosses year-end)
+
+params_contract:
+  # Shared pricing defaults (override per crop or tail if needed)
+  target_loss_ratio: 0.65
+  deductions: 0.10
+  # Uniform fallbacks -- used when not set at crop or tail level
+  coverage: 0.14
+  insured_value: 7_200_000
+  crops: 
+    dry_rice: 
+      # Monitors both deficit in lower and excess in upper
+      windows: 
+          1:
+            lower: 
+              # Deficit rainfall: continuous ramp from p10 to p1
+              'design':   'continuous'
+              'levels': [10, 1]
+              # inherits coverage=0.14, insured_value=7_200_000 from top level
+            upper: 
+              design: 'continuous'
+              levels: [90, 99]
 
 params_bootstrap:
   n_iterations: 1000

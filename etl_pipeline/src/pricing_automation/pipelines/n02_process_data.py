@@ -44,6 +44,55 @@ def get_smooth_series(ds, field, smooth_window):
     return da
 
 
+RENAME_DICT = {
+    'swc': ['swc', 'swvl1', 'soil_water_content'],
+    'prcp': ['prcp', 'tp', 'total_precipitation', 'precipitation', 'precip', 'prc', 'pcp'],
+    'tmin': ['tmin', 't2m', '2t', 't', 'mn2t6', 'mn2t', 'mn2t24'],
+    'tmax': ['tmax', 't2m', '2t', 't', 'mx2t6', 'mx2t', 'mx2t24'],
+}
+
+#———————————————————————————————————————————
+# RENAME VARIABLES
+#———————————————————————————————————————————
+
+
+def rename_vars(ds_orig, variable=None):
+    """Rename variables in the original dataset with the registered names"""
+    if variable is None:
+        raise KeyError(f'{variable} is not in the dataset, a variable name must be provided.')
+    ds = ds_orig.copy()
+
+    # Get coordinate names
+    lon, lat, time = get_coordinates(ds)
+
+    # Get list of possible variable names
+    if variable not in RENAME_DICT:
+        raise KeyError(f'{variable} is not available in the registered variables in n02_process_data')
+
+    list_vars = list(set(ds.data_vars).intersection(set(RENAME_DICT[variable])))
+    if len(list_vars)==0:
+        print(f'Either the variable name is not registered in n02_process_data or the variable is wrong.')
+        raise KeyError(f'There is no variable in the dataset matching the requested variable: {variable}')
+
+    var_name = list_vars[0]
+    print(f'{var_name} was detected among the variables. It will be used and renamed to {variable}')
+
+    dict_rename = {var_name: variable}
+    if lon is not None:
+        dict_rename[lon] = 'lon'
+        print(f'Renaming {lon} to "lon"')
+    if lat is not None:
+        dict_rename[lat] = 'lat'
+        print(f'Renaming {lat} to "lat"')
+    if time is not None:
+        dict_rename[time] = 'time'
+        print(f'Renaming {time} to "time"')
+
+    ds = ds.rename(dict_rename)
+
+    return ds
+
+
 #———————————————————————————————————————————
 # CLEAN DATASET
 #———————————————————————————————————————————
@@ -540,6 +589,11 @@ def process_data_request(
     # Interpolate data from ERA5 to a finer resolution
     ds_slice = regrid_dataset(ds_slice, method='linear', res=interp_resolution)
 
+    # Rename variables to use uniform names
+    ds_slice = rename_vars(ds_slice, variable)
+    ds_slice = ds_slice[[variable]] # selecting only the variable of interest
+    print(f"Renaming variables done")
+
     # Clean data with time slices and na replace values
     ds_clean = clean_data(ds_slice, date_range = period, var=variable, na_replace=na_replace)
     print(f"Cleaning done")
@@ -641,6 +695,29 @@ def process_data_temp(
 
     print('Events successfully indetified')
 
+    return ds_process, ds_clim
+
+
+def process_data(
+    ds : xr.Dataset,
+    gdf : gpd.GeoDataFrame,
+    params : dict,
+    params_s: dict={},       
+):
+    PERIL_PROCESS = {
+        'swc': process_data_request,
+        'prcp': process_data_request,
+        'tmin': process_data_temp,
+        'tmax': process_data_temp,
+    }
+
+    variable = params['variable']
+    ds_process, ds_clim = PERIL_PROCESS[variable](
+        ds,
+        gdf,
+        params,
+        params_s
+    )
     return ds_process, ds_clim
 
 

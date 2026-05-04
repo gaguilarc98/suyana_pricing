@@ -17,7 +17,7 @@ def run_bootstrap_aep(df_orig, gdf_aoi, params_bootstrap):
         how = 'left',
         on = [LOCATION_NAME]
     )
-    df['loss_usd'] = loss_usd_ha * df['area_ha'] * df['empirical_loss']
+    df['loss_usd'] = df['area_ha'] * df['total_payout'] #* loss_usd_ha
 
     # 1. Aggregate annual losses per crop & combined
     logging.info("Aggregating annual losses...")
