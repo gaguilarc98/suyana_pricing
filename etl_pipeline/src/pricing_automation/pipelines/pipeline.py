@@ -8,7 +8,7 @@ from .n04_bootstrap_aep import *
 from .n05_pricing_quote import *
 from .n06_visualizations import *
 
-def create_pipeline(**kwargs) -> Pipeline:
+def aoi_pipeline(**kwargs) -> Pipeline:
     return Pipeline([
         node(
             func = get_aoi,
@@ -17,6 +17,10 @@ def create_pipeline(**kwargs) -> Pipeline:
             name = 'get_aoi',
             tags = ['extract']
         ),
+    ])
+
+def extract_pipeline(**kwargs) -> Pipeline:
+    return Pipeline([
         node(
             func = extract_data,
             inputs = ['dict_bounds', 'params:params_request', 'params:params_t'],
@@ -38,6 +42,11 @@ def create_pipeline(**kwargs) -> Pipeline:
             name = 'summarize_processed_data',
             tags = ['process']
         ),
+    ])
+
+
+def trigger_pipeline(**kwargs) -> Pipeline:
+    return Pipeline([  
         node(
             func = create_index_values,
             inputs = ['df_cluster', 'params:params_indices'],
@@ -52,6 +61,11 @@ def create_pipeline(**kwargs) -> Pipeline:
             name = 'generate_payout_policy',
             tags = ['triggers']
         ),
+    ])
+
+
+def viz_pipeline(**kwargs) -> Pipeline:
+    return Pipeline([
         node(
             func = run_bootstrap_aep,
             inputs = ['df_payouts', 'gdf_aoi', 'params:params_bootstrap'],
@@ -72,7 +86,7 @@ def create_pipeline(**kwargs) -> Pipeline:
             outputs = ['plt_portfolio', 'plt_aep'],
             name = 'plot_aep',
             tags = ['pricing']
-        ),
+        ),  
         node(
             func = plot_variability_map,
             inputs = ['ds_processed', 'gdf_aoi', 'params:params_process'],
@@ -101,4 +115,130 @@ def create_pipeline(**kwargs) -> Pipeline:
             name = 'plot_anomaly_timeseries',
             tags = ['viz']
         ),
+        node(
+            func = create_activation_map,
+            inputs = ['df_payouts', 'gdf_aoi', 'params:params_map'],
+            outputs = 'plt_activation_map',
+            name = 'create_activation_map',
+            tags = ['viz']
+        ),
+        node(
+            func = plot_activation_history,
+            inputs = ['df_cluster', 'df_payouts', 'params:params_series', 'params:params_indices'],
+            outputs = 'plt_time_series',
+            name = 'plot_activation_history',
+            tags = ['viz']
+        ),
     ])
+
+
+def planet_viz_pipeline(**kwargs) -> Pipeline:
+    return Pipeline([
+        node(
+            func = run_bootstrap_aep,
+            inputs = ['df_payouts', 'gdf_climate_areas', 'params:params_bootstrap'],
+            outputs = ['df_annual_agg', 'df_aep'],
+            name = 'run_bootstrap_aep',
+            tags = ['aep', 'pricing']
+        ),
+        node(
+            func = run_pricing_quote,
+            inputs = ['df_annual_agg', 'params:params_quote'],
+            outputs = 'df_pricing',
+            name = 'run_pricing_quote',
+            tags = ['pricing']
+        ),
+        node(
+            func = plot_aep,
+            inputs = ['df_annual_agg', 'df_aep', 'params:params_process'],
+            outputs = ['plt_portfolio', 'plt_aep'],
+            name = 'plot_aep',
+            tags = ['pricing']
+        ),
+        node(
+            func = plot_trigger_frequency_map,
+            inputs = ['df_payouts', 'gdf_climate_areas'],
+            outputs = 'plt_trigger_freq_map',
+            name = 'plot_trigger_frequency_map',
+            tags = ['viz']
+        ), 
+        node(
+            func = create_activation_map,
+            inputs = ['df_payouts', 'gdf_climate_areas', 'params:params_map'],
+            outputs = 'plt_activation_map',
+            name = 'create_activation_map',
+            tags = ['viz']
+        ),
+        node(
+            func = plot_activation_history,
+            inputs = ['df_cluster', 'df_payouts', 'params:params_series', 'params:params_indices'],
+            outputs = 'plt_time_series',
+            name = 'plot_activation_history',
+            tags = ['viz']
+        ),
+    ])
+
+
+def planet_pipeline(**kwargs) -> Pipeline:
+    return Pipeline([
+        node(
+            func = extract_data,
+            inputs = ['dict_bounds', 'params:params_request', 'params:params_t'],
+            outputs = 'ds_request',
+            name = 'extract_data',
+            tags = ['extract']
+        ),
+        node(
+            func = create_climate_areas,
+            inputs = ['gdf_aoi', 'ds_request', 'params:params_areas', 'params:params_s'],
+            outputs = 'gdf_climate_areas',
+            name = 'create_climate_areas',
+            tags = ['extract']
+        ),
+        node(
+            func = create_planet_subscriptions,
+            inputs = ['params:params_subscription', 'params:params_t', 'params:params_s', 'gdf_aoi', 'params:params_credentials'],
+            outputs = 'dt_planet_catalog',
+            name = 'extract_data_planet',
+            tags = ['extract']
+        ), 
+        node(
+            func = preprocess_planet,
+            inputs = ['dt_planet_catalog', 'params:params_transform_1'],
+            outputs = 'ds_request_1',
+            name = 'preprocess_data_1',
+            tags = ['extract']
+        ),
+        node(
+            func = preprocess_planet,
+            inputs = ['dt_planet_catalog', 'params:params_transform_2'],
+            outputs = 'ds_request_2',
+            name = 'preprocess_data_2',
+            tags = ['extract']
+        ),
+        node(
+            func = process_data_planet,
+            inputs = ['ds_request_1', 'ds_request_2', 'ds_request', 'gdf_climate_areas', 'params:params_process_planet'],
+            outputs = ['df_cluster', 'ds_climatology'],
+            name = 'process_data',
+            tags = ['process']
+        ),
+    ])
+
+
+def create_pipeline(**kwargs) -> Pipeline:
+    aoi = aoi_pipeline()
+    extract = extract_pipeline()
+    trigger = trigger_pipeline()
+    viz = viz_pipeline()
+
+    return aoi + extract + trigger + viz
+
+
+def create_planet_pipeline(**kwargs) -> Pipeline:
+    aoi = aoi_pipeline()
+    planet = planet_pipeline()
+    trigger = trigger_pipeline()
+    viz = planet_viz_pipeline()
+
+    return aoi + planet + trigger + viz

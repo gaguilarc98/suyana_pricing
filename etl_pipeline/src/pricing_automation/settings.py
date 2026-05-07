@@ -32,16 +32,20 @@ from pathlib import Path
 # Get project root (one level above src/)
 BASE_DIR = Path(__file__).resolve().parents[2]
 # Load .env from project root explicitly
-load_dotenv(BASE_DIR / ".env")
+load_dotenv(BASE_DIR / ".env", override=True) #overrride otherwise it picks any credentials saved in the cache
 
 # Keyword arguments to pass to the `CONFIG_LOADER_CLASS` constructor.
 CONFIG_LOADER_ARGS = {
     "base_env": "base",
     "default_run_env": "local",
-    # "config_patterns": {
-    #     "spark" : ["spark*/"],
-    #     "parameters": ["parameters*", "parameters*/**", "**/parameters*"],
-    # }
+    "config_patterns": {
+        "spark" : ["spark*/"],
+        "parameters": ["parameters*", "parameters*/**", "**/parameters*"],
+        "credentials": ["credentials*", "credentials*/**", "**/credentials*"]
+    },
+    "custom_resolvers": {
+        "oc.env": oc.env,
+    }
 }
 
 # Class that manages Kedro's library components.

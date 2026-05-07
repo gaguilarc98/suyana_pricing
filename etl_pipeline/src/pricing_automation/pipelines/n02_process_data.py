@@ -1,5 +1,7 @@
 from .utils import *
 
+from .a02_create_clusters import *
+from .a02_preprocess_planet_data import *
 
 #———————————————————————————————————————————
 # AUXILIARY FUNCTIONS
@@ -244,9 +246,14 @@ def get_cdf_fixed_data(
 
         drop_cols = ["rank"] if level is None else [level, "rank"]
 
+        df_base_dedup = (
+            df_base[group_cols + ['rank', field_base]]
+            .drop_duplicates(subset=group_cols + ['rank'], keep='first')
+        )
+
         # Get the field from base dataset based on joins by group_cols. level and ranking
         df_orig = df_orig[dims + drop_cols].merge(
-            df_base[group_cols + ['rank', field_base]],
+            df_base_dedup,
             how='left',
             on=group_cols + ['rank']
         )
@@ -264,63 +271,6 @@ def get_cdf_fixed_data(
     da = df_list.set_index(dims).to_xarray()[field_base]
 
     return da
-
-
-#———————————————————————————————————————————
-# ASSIGN CLUSTER COORDINATE TO DATASET
-#———————————————————————————————————————————
-
-
-def create_cluster_coord(ds_orig, gdf_orig, cluster_var, method='within', check_var=None, k=6):
-    ds = ds_orig.copy()
-    gdf = gdf_orig.copy()
-
-    # Extract lon and lat from the dataset
-    lon_var, lat_var, time_var = get_coordinates(ds)
-    points = ds[[lat_var, lon_var]].to_dataframe().reset_index()  
-
-    # Create a DataFrame of points
-    points = gpd.GeoDataFrame(
-        points,
-        geometry=gpd.points_from_xy(points[lon_var], points[lat_var]),
-        crs=gdf.crs
-    )
-
-    # Perform spatial join
-    if method == 'within':
-        points = gpd.sjoin(points, gdf[[cluster_var, "geometry"]], how="left", predicate="within")
-        # Assign as coordinate to the dataset
-        ds_points = points.set_index([lat_var, lon_var])[[cluster_var]]
-        ds_points = ds_points.to_xarray().set_coords(cluster_var)
-        ds = xr.merge([ds, ds_points])
-        # Create a pixel assignation dataframe
-        df_cluster = ds[[lon_var, lat_var, cluster_var]].to_dataframe()
-        df_cluster = df_cluster.reset_index().dropna(subset=[cluster_var])
-
-    elif method == 'nearest':
-        # Match nearest coordinates from grid to centroid of polygons
-        gdf['lon'] = gdf.centroid.x
-        gdf['lat'] = gdf.centroid.y 
-        # Filter only valid points by checking if check_var is all null
-        if check_var:
-            valid_count = (~ds[check_var].isnull()).sum(dim=time_var)
-            points = (
-                ds.assign_coords(valid_count=valid_count)
-                [[lon_var, lat_var, 'valid_count']]
-                .to_dataframe()
-                .reset_index()
-            )
-            points = points[points['valid_count']!=0].copy()
-            
-        df_cluster = match_grid_points(points, gdf, k=k)
-        df_cluster = df_cluster[[lon_var, lat_var, cluster_var]].copy()
-
-        ds = select_coordinates(ds, df_cluster)
-        #ds = ds.reset_index('points')
-    
-    df_cluster['method'] = method
-
-    return ds, df_cluster
 
 
 #———————————————————————————————————————————
@@ -436,6 +386,192 @@ def add_normalized_variable(ds, field, clim_field, std_field, var_name):
     return ds
 
 
+#———————————————————————————————————————————————————————————————
+# SLICE MULTIPLE GEOMETRIES
+#———————————————————————————————————————————————————————————————
+
+_AREAS_DEFAULTS = {
+    "variable":     None,   # required
+    "location_var": None,   # required
+    "cluster_var":  "cluster_id",
+    "min_area_km2": 125,
+    "min_pixels":   4,
+    "min_clusters": 4,
+    "n_comp":       3,
+    "bandwidth":    0.03,
+    "grid_res":     300,
+}
+
+def _slice_single_geometry(ds_orig, gdf_orig, params_areas):
+    """
+    Slice one polygon into climate-homogeneous sub-polygons using PCA + KMeans + Voronoi.
+    Returns the original geometry as a single area when:
+      - area < min_area_km2
+      - no pixels fall within the geometry
+      - n_areas or n_comp collapse to <= 1 after all caps
+    """
+    p = _AREAS_DEFAULTS | params_areas
+ 
+    variable     = p["variable"]
+    location_var = p["location_var"]
+    cluster_var  = p["cluster_var"]
+    min_area_km2 = p["min_area_km2"]
+    max_area_km2 = p["max_area_km2"]
+    min_clusters = p["min_clusters"]
+    n_comp       = p["n_comp"]
+ 
+    if variable is None or location_var is None:
+        raise ValueError("params_areas must include 'variable' and 'location_var'.")
+ 
+    gdf = gdf_orig.copy()
+ 
+    # Area guard
+    gdf = add_area_column(gdf, "_area_km2")
+    area_km2 = gdf["_area_km2"].iloc[0]
+    gdf = gdf.drop(columns=["_area_km2"])
+ 
+    def _single_area(gdf, cluster_var):
+        gdf = gdf.copy()
+        gdf.insert(0, cluster_var, 0)
+        return gdf
+ 
+    if area_km2 < min_area_km2:
+        return _single_area(gdf, cluster_var)
+ 
+    # Select pixels within this geometry
+    ds = ds_orig.copy()
+    lon, lat, time = get_coordinates(ds)
+
+    ds = rename_vars(ds, variable)
+ 
+    ds = slice_dataset_w_geometry(ds, gdf)
+    ds, _ = create_cluster_coord(ds, gdf, location_var, method="within")
+ 
+    if sum(ds[location_var].isnull().values.ravel() == False) == 0:  # noqa: E712
+        return _single_area(gdf, cluster_var)
+ 
+    # Build pixel-level feature matrix (pixels x time)
+    df_sum = ds.to_dataframe().reset_index()
+    df_sum = df_sum.dropna(subset=[location_var]).copy()
+    df_sum[time] = pd.to_datetime(df_sum[time])
+ 
+    df = df_sum.pivot_table(
+        index=[lat, lon], columns=[time], values=[variable], aggfunc="mean"
+    )
+    df.columns = [f"{col[0]}_{col[1]}" for col in df.columns]
+    df = df.dropna(axis=1, how="all").dropna(axis=0, how="all")
+ 
+    n_pixels = df.shape[0]
+ 
+    # n_areas: max of min_clusters and area-based term, capped by available pixels
+    n_areas = max(min_clusters, max(1, int(area_km2 / max_area_km2)))
+    n_areas = min(n_areas, n_pixels)
+    n_comp_eff = min(n_comp, n_pixels, n_areas)
+ 
+    if n_areas <= 1 or n_comp_eff < 1:
+        return _single_area(gdf, cluster_var)
+ 
+    # PCA + KMeans
+    df_pca = apply_pca(df, n_comp_eff)
+    df_pca[cluster_var] = get_cluster(df_pca, n_areas)
+    df_pca = df_pca.reset_index()
+ 
+    # Polygonize clusters via Voronoi and intersect with original geometry
+    gdf_cluster = create_voronoi_polygons(gdf, df_pca, cluster_var, lon, lat)
+    gdf_cluster = gdf_cluster.to_crs(gdf.crs)
+    gdf_cluster = gpd.overlay(gdf_cluster, gdf, how="intersection")
+    gdf_cluster = clean_polygons(gdf_cluster)
+    if cluster_var in gdf_cluster.columns:
+        gdf_cluster = gdf_cluster.drop(columns=[cluster_var])
+    gdf_cluster = gdf_cluster.reset_index(names=cluster_var)
+
+    gdf_cluster = gdf_cluster.rename(columns={location_var: f'{location_var}_orig'})
+    gdf_cluster[location_var] = (
+        gdf_cluster[f'{location_var}_orig'].astype(str) + '-' + 
+        gdf_cluster[cluster_var].astype(str).str.rjust(2,"0")
+    )
+ 
+    return gdf_cluster
+
+
+def create_climate_areas(
+    gdf: gpd.GeoDataFrame,
+    ds: xr.Dataset,
+    params_areas: dict,
+    params_s: dict = {},
+) -> gpd.GeoDataFrame:
+    """
+    Slice every polygon in a GeoDataFrame into climate-homogeneous sub-polygons.
+    Parameters:
+        gdf : GeoDataFrame that must contain the column specified by ``location_var``.
+        ds : xr.Dataset with climate dataset covering all geometries in ``gdf``.
+        params_areas : dict parameters. Required: ``variable``, ``location_var``.
+            Optional (see ``_AREAS_DEFAULTS`` for defaults):
+            ``cluster_var``, ``min_area_km2``, ``min_pixels``, ``min_clusters``, ``n_comp``.
+        params_s : dict (optional) passed to ``subset_geometry`` to filter ``gdf`` before processing.
+            Supports ``include`` and ``exclude`` sub-dicts keyed by column name.
+    Returns:
+        GeoDataFrame. One row per sub-polygon with all original columns retained and a new ``cluster_var``.
+    """
+    cluster_var = params_areas.get("cluster_var", 'cluster_id')
+    id_col = params_areas.get("location_var", "location_id")
+ 
+    gdf_work = subset_geometry(gdf, params_s).copy()
+    if len(gdf_work) == 0:
+        raise ValueError("subset_geometry returned an empty GeoDataFrame. Check params_s.")
+ 
+    results = []
+    list_geoms = np.sort(gdf_work[id_col].unique())
+    for geom_id in list_geoms:
+        gdf_single = gdf_work[gdf_work[id_col] == geom_id].copy()
+        try:
+            gdf_sliced = _slice_single_geometry(ds, gdf_single, params_areas)
+            print(f'[{geom_id}] done', sep=' ')
+        except Exception as exc:
+            print('')
+            print(f"[{geom_id}] slicing failed ({exc}), keeping original geometry.")
+            gdf_single.insert(0, cluster_var, 0)
+            gdf_sliced = gdf_single
+        results.append(gdf_sliced)
+ 
+    return pd.concat(results, axis=0, ignore_index=True)
+
+
+#———————————————————————————————————————————
+# PROCESS DATASET FROM PLANET
+#———————————————————————————————————————————
+
+
+def preprocess_planet(df, params_transform, n_jobs=6):
+    """
+    Process all tiff files from Planeet in S3
+    Args:
+        df : pd.DataFrame of the subscription catalog with keys and details
+        params_transform : dict of parameters to look for data
+
+    Returns:
+        ds_full : xr.Dataset of processed tiffs
+    """
+    
+    list_files = list_files_from_bucket(df, params_transform)
+    print('Third version')
+
+    ds_list = Parallel(n_jobs=n_jobs)(
+        delayed(process_tiff)(file) for file in list_files
+    )
+
+    valid_ds = [ds for ds in ds_list if ds is not None]
+    n_dropped = len(ds_list) - len(valid_ds)
+    print(f"Files processed: {len(ds_list)} | Dropped (None): {n_dropped} | Valid: {len(valid_ds)}")
+
+    if not valid_ds:
+        raise ValueError("No valid datasets after processing. All files returned None.")
+
+    ds_full = xr.concat(valid_ds, dim='time')
+    ds_full = ds_full.drop_duplicates(dim=['time', 'lat', 'lon'], keep='first')
+
+    return ds_full
+
 #———————————————————————————————————————————
 # PROCESS DATASET FROM PLANET
 #———————————————————————————————————————————
@@ -456,25 +592,25 @@ def process_data_planet(
         - ds2_orig : (xr.Dataset) Dataset from second period of Planet 
         - gdf : (gpd.GeoDataFrame) GeoDataFrame with geometries
         - params : (dict) Dictionary with parameters to process data
+    
     Returns:
-        - df_concat : (pd.DataFrame) with processed data
-        - ds_clim : (xr.Dataset) with climatologies
+        - df_concat : pd.DataFrame with processed data
+        - ds_clim : xr.Dataset with climatologies
     """
     # Read parameters from dictionary
     subset = params['subset']
     #location_var = params['location_var']
-    var_planet = params['variable']['planet']
-    var_era5 = params['variable']['era5']
+    variable = params['variable']
     na_replace_era5 = params['na_replace']['era5']
     na_replace_planet = params['na_replace']['planet']
     period_planet1 = params['time_window']['planet1']
     period_planet2 = params['time_window']['planet2']
     period_era5 = params['time_window']['era5']
-    interp_resolution = params['interp_resolution']
-    fill_gap_window = params['fill_gap_window']
-    cdf_time_window = params['cdf_time_window']
-    time_smooth_window = params['time_smooth_window']
-    clim_smooth_window = params['climatology_smooth_window']
+    interp_resolution = params.get('interp_resolution', 0.01)
+    fill_gap_window = params.get('fill_gap_window', 7)
+    cdf_time_window = params.get('cdf_time_window', 45)
+    time_smooth_window = params.get('time_smooth_window', 21)
+    clim_smooth_window = params.get('climatology_smooth_window', 7)
 
     # Subset climate area geometry
     LOCATION_NAME = 'location_id'
@@ -486,10 +622,25 @@ def process_data_planet(
     # Interpolate data from ERA5 to a finer resolution
     ds_era = regrid_dataset(ds_era, method='linear', res=interp_resolution)
 
+    # Rename variables to use uniform names
+    ds1_orig = rename_vars(ds1_orig, variable)
+    ds2_orig = rename_vars(ds2_orig, variable)
+    ds_era = rename_vars(ds_era, variable)
+
+    # Remove unnecesary coordinates
+    keep_coords = list(get_coordinates(ds_era)) # list of coords to keep
+    ds_era = drop_single_coords(ds_era, except_coords=keep_coords)[[variable]] 
+
+    keep_coords_1 = list(get_coordinates(ds1_orig)) # list of coords to keep
+    ds1_orig = drop_single_coords(ds1_orig, except_coords=keep_coords)[[variable]]
+
+    keep_coords_1 = list(get_coordinates(ds2_orig)) # list of coords to keep
+    ds2_orig = drop_single_coords(ds2_orig, except_coords=keep_coords)[[variable]] 
+
     # Clean data with time slices and na replace values
-    ds_period1 = clean_data(ds1_orig, date_range=period_planet1, var=var_planet, na_replace=na_replace_planet)
-    ds_period2 = clean_data(ds2_orig, date_range=period_planet2, var=var_planet, na_replace=na_replace_planet)
-    ds_gap = clean_data(ds_era, date_range = ('2002-01-01', None), var=var_era5, na_replace=na_replace_era5)
+    ds_period1 = clean_data(ds1_orig, date_range=period_planet1, var=variable, na_replace=na_replace_planet)
+    ds_period2 = clean_data(ds2_orig, date_range=period_planet2, var=variable, na_replace=na_replace_planet)
+    ds_gap = clean_data(ds_era, date_range = ('2002-01-01', None), var=variable, na_replace=na_replace_era5)
     print(f"Cleaning done")
 
     ds_period1, df1_ = create_cluster_coord(ds_period1, gdf_ca, LOCATION_NAME) #Using v2 is faster since it applies a spatial join
@@ -503,25 +654,25 @@ def process_data_planet(
     print(f"Clustering and summarizing done")
 
     # Smooth time series given the smooth window
-    ds_period1['swc_smooth'] = get_smooth_series(ds_period1, var_planet, fill_gap_window)
-    ds_period2['swc_smooth'] = get_smooth_series(ds_period2, var_planet, fill_gap_window)
+    ds_period1[f'{variable}_smooth'] = get_smooth_series(ds_period1, variable, fill_gap_window)
+    ds_period2[f'{variable}_smooth'] = get_smooth_series(ds_period2, variable, fill_gap_window)
 
     # Apply CDF matching to the time series with the second period of planet as basis
-    ds_gap['swc_smooth'] = get_cdf_fixed_data(
+    ds_gap[f'{variable}_smooth'] = get_cdf_fixed_data(
         ds = ds_gap, 
         ds_base = ds_period2, 
-        field_target = var_era5, 
-        field_base = 'swc_smooth',
+        field_target = variable, 
+        field_base = f'{variable}_smooth',
         group_cols = [LOCATION_NAME], 
         level = 'dayofyear', 
         window_size = cdf_time_window
     )
     # Use ERA5 as a bridge between Planet AMSRE and Planet AMSR2
-    ds_period1['swc_smooth'] = get_cdf_fixed_data(
+    ds_period1[f'{variable}_smooth'] = get_cdf_fixed_data(
         ds = ds_period1, 
         ds_base = ds_gap, 
-        field_target = 'swc_smooth', 
-        field_base = 'swc_smooth',
+        field_target = f'{variable}_smooth', 
+        field_base = f'{variable}_smooth',
         group_cols = [LOCATION_NAME], 
         level = 'dayofyear', 
         window_size = cdf_time_window
@@ -533,12 +684,15 @@ def process_data_planet(
     ds_concat = xr.concat([ds_period1, ds_gap, ds_period2], dim='time')
     print(f"Concatenating arrays done")
     
-    ds_concat['swc_adjusted'] = get_smooth_series(ds_concat, 'swc_smooth', time_smooth_window)
+    ds_concat = ds_concat.rename({variable: f'{variable}_orig'})
+    ds_concat[variable] = get_smooth_series(ds_concat, f'{variable}_smooth', time_smooth_window)
 
     ds_concat, ds_clim = get_climatology(
-        ds_concat, 'swc_adjusted', 'climatology', level='dayofyear', smooth_window=clim_smooth_window
+        ds_concat, variable, f'clim_{variable}', level='dayofyear', smooth_window=clim_smooth_window
     )
-    ds_concat = add_neg_anomaly(ds_concat, 'swc_adjusted', 'climatology')
+    
+    # Compute anomalies using the added climatology
+    ds_concat[f'anom_{variable}'] = ds_concat[variable] - ds_concat[f'clim_{variable}']
     print('Climatology and anomaly successfully added')
 
     df_concat = ds_concat.to_dataframe().reset_index()

@@ -4,7 +4,7 @@ from __future__ import annotations
 from kedro.framework.project import find_pipelines
 from kedro.pipeline import Pipeline, pipeline
 
-from pricing_automation.pipelines.pipeline import create_pipeline
+from pricing_automation.pipelines.pipeline import create_pipeline, create_planet_pipeline
 
 
 def register_pipelines() -> dict[str, Pipeline]:
@@ -15,5 +15,6 @@ def register_pipelines() -> dict[str, Pipeline]:
     """
     pipelines = {}
     pipelines['pricing'] = create_pipeline()
+    pipelines['planet'] = create_planet_pipeline()
     pipelines["__default__"] = pipelines['pricing']
     return pipelines
