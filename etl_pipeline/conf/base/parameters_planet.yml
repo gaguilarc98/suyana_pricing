@@ -1,0 +1,83 @@
+# Parameters for already available areas
+_arg:
+  country: ${runtime_params:country, ${globals:country}}
+  region: ${runtime_params:region, ${globals:region}}
+  lead_id: ${runtime_params:lead_id, 'test1'}
+  loc_id: ${runtime_params:loc_id, 'ID-001'}
+  provider: ${runtime_params:provider, ${globals:provider}}
+  field: ${runtime_params:field, ${globals:field}}
+  start_year: ${runtime_params:start_year, 1996}
+  end_year: ${runtime_params:end_year, 2025}
+
+# Parameters for climate areas
+params_areas:
+    variable: ${_arg.field}
+    location_var: "location_id"
+    # optional (these have default values)
+    #cluster_var:  "cluster_id"
+    min_area_km2: 150
+    max_area_km2: 900
+    min_pixels: 4
+    min_clusters: 3
+    n_comp: 3
+    #"bandwidth":    0.03,
+    #"grid_res":     300,
+    
+# Params for planet subscription
+params_credentials: 
+  PLANET_API_KEY: "${oc.env:PLANET_API_KEY}"
+  S3_BUCKET: "${oc.env:S3_BUCKET}"
+  AWS_REGION: "us-east-1" #"${oc.env:AWS_REGION}"
+  AWS_ACCESS_KEY_ID: "${oc.env:AWS_ACCESS_KEY_ID}"
+  AWS_SECRET_ACCESS_KEY: "${oc.env:AWS_SECRET_ACCESS_KEY}"
+
+params_subscription:
+  id_column: 'location_id' #'MPIO_CNMBR' #'id_canton' 
+  prefix: ${_arg.country} #'CO-municipio' #'BO-SC-canton'
+  #variable: 'SWC'
+  #version: 'V5.0'
+  #band: 'C'
+  #start_date: '2002-06-15' #'2002-06-15' #'2012-07-25' #inclusive
+  #end_date: '2011-10-03' #'2011-10-03' #'2025-08-31' # non-inclusive
+  
+params_transform_1:
+  id_location: ${_arg.loc_id}
+  prefix: ${_arg.country}
+  #suffix: null
+  #variable: 'SWC'
+  start_date: '2002-06-15'
+  end_date: '2011-10-03'
+
+params_transform_2:
+  id_location: ${_arg.loc_id}
+  prefix: ${_arg.country}
+  #suffix: null
+  #variable: 'SWC'
+  start_date: '2012-07-25'
+  end_date: '2025-12-31'
+
+params_process_planet:
+  subset:   
+    include: 
+      location_id_orig:
+        - ${_arg.loc_id}
+    location_var: 'location_id'
+  variable: ${_arg.field}
+  na_replace:
+    planet: 65535
+    era5: null
+  time_window: 
+    planet1: 
+      - '2002-06-15'
+      - '2011-10-03'
+    era5: 
+      - '2011-10-04'
+      - '2012-07-24'
+    planet2: 
+      - '2012-07-25'
+      - null
+  interp_resolution: 0.01 #If 0 then the functions does not interpolate
+  fill_gap_window: 7
+  cdf_time_window: 45
+  time_smooth_window: 21
+  climatology_smooth_window: 7

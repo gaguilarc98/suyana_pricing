@@ -10,6 +10,7 @@ def run_bootstrap_aep(df_orig, gdf_aoi, params_bootstrap):
     loss_usd_ha = params_bootstrap.get('loss_usd_ha', 1)
     
     LOCATION_NAME = 'location_id'
+    gdf_aoi = add_area_column(gdf_aoi)
     gdf_aoi['area_ha'] = gdf_aoi['area_km2']*100
     df = df_orig.copy()
     df = df.merge(

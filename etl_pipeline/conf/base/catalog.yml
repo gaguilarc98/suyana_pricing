@@ -8,6 +8,7 @@
 # Use snake_case style for uniformity e.g. costa_rica, 'swiss_re', 'bisa_seguros'
 _arg:
   country: ${runtime_params:country, ${globals:country}}
+  region: ${runtime_params:region, ${globals:region}}
   lead_id: ${runtime_params:lead_id, 'test1'}
   provider: ${runtime_params:provider, ${globals:provider}}
   field: ${runtime_params:field, ${globals:field}}
@@ -16,12 +17,12 @@ _arg:
 # Geometry Data
 gdf_request:
   type: geopandas.GenericDataset
-  filepath: ${globals:data_path}/geometries/colombia_polygons.parquet
+  filepath: ${globals:data_path}/geometries/${_arg.country}_polygons.parquet
   file_format: parquet
   save_args:
     compression: GZIP
 
-# Request Data:
+# Geometry Data:
 dict_bounds:
   type: MemoryDataset
   #type: json.JSONDataset  # Note: Use JSONDataSet from kedro_datasets
@@ -29,7 +30,7 @@ dict_bounds:
   
 gdf_aoi:
   type: geopandas.GenericDataset
-  filepath: ${globals:data_path}/${_arg.country}/${_arg.lead_id}/geometries/location_geometries.parquet 
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/geometries/location_geometries.parquet 
   file_format: parquet #Important if not provided kedro will attempt to use GDAL which does not support S3 natively
   save_args:
     compression: GZIP
@@ -38,11 +39,13 @@ gdf_aoi:
   #  driver: GPKG
   #  encoding: UTF-8
 
+# Request data
+
 ds_request:
   #type: pricing_automation.datasets_registry.NetCDFPartitionedDataset
   #filepath: data/${_arg.country}/sources/${_arg.provider}/${_arg.field}_<partition>.nc
   type: pricing_automation.datasets_registry.ZarrPartitionedDataset
-  filepath: ${globals:data_path}/${_arg.country}/${_arg.lead_id}/sources/${_arg.provider}_${_arg.field}_<partition>.zarr
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/sources/${_arg.provider}_${_arg.field}_<partition>.zarr
   save_args:
     consolidated: true
     mode: w
@@ -53,7 +56,7 @@ ds_request:
 # Index Data
 ds_processed:
   type: pricing_automation.datasets_registry.XarrayZarrDataset
-  filepath: ${globals:data_path}/${_arg.country}/${_arg.lead_id}/features/${_arg.provider}_${_arg.field}_anomalies.zarr #${_arg.version}.zarr
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/features/${_arg.provider}_${_arg.field}_anomalies.zarr #${_arg.version}.zarr
   save_args:
     consolidated: true
     mode: w
@@ -65,10 +68,10 @@ ds_processed:
 
 ds_climatology: 
   type: pricing_automation.datasets_registry.XarrayZarrDataset
-  filepath: ${globals:data_path}/${_arg.country}/${_arg.lead_id}/features/${_arg.provider}_${_arg.field}_climatology.zarr
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/features/${_arg.provider}_${_arg.field}_climatology.zarr
   save_args:
     consolidated: true
-    mode: w
+    mode: a
     append_dim: location_id
   load_args:
     consolidated: true
@@ -76,69 +79,77 @@ ds_climatology:
 # Summarized Data
 df_pixels:
   type: pandas.ParquetDataset
-  filepath: ${globals:data_path}/${_arg.country}/${_arg.lead_id}/features/${_arg.provider}_${_arg.field}_pixel_assignment.parquet
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/features/${_arg.lead_id}/${_arg.provider}_${_arg.field}_pixel_assignment.parquet
+  #type: pricing_automation.datasets_registry.DeltaLakeDataset
+  #filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/features/${_arg.lead_id}/${_arg.provider}_${_arg.field}_pixel_assignment
+  #save_args:
+  #  mode: append
 
 df_cluster: 
-  type: pandas.ParquetDataset
-  filepath: ${globals:data_path}/${_arg.country}/${_arg.lead_id}/outputs/${_arg.provider}_${_arg.field}_daily_indices.parquet 
+  #type: pandas.ParquetDataset
+  #filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/outputs/${_arg.lead_id}/${_arg.provider}_${_arg.field}_daily_indices.parquet 
+  #save_args:
+  #  compression: GZIP
+  type: pricing_automation.datasets_registry.DeltaLakeDataset
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/outputs/${_arg.lead_id}/${_arg.provider}_${_arg.field}_daily_indices
   save_args:
-    compression: GZIP
+    mode: append
 
 # Indices Data by Window
 df_indices: 
   type: pandas.ParquetDataset
-  filepath: ${globals:data_path}/${_arg.country}/${_arg.lead_id}/outputs/${_arg.provider}_${_arg.field}_window_indices.parquet
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/outputs/${_arg.lead_id}/${_arg.provider}_${_arg.field}_window_indices.parquet
   save_args:
     compression: GZIP
 
 pkl_fit: 
   type: pickle.PickleDataset
-  filepath: ${globals:data_path}/${_arg.country}/${_arg.lead_id}/outputs/${_arg.provider}_${_arg.field}_model_fit.pkl
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/outputs/${_arg.lead_id}/${_arg.provider}_${_arg.field}_model_fit.pkl
   backend: pickle
 
 # Payouts and Policy Data by Window
 df_payouts:
   type: pandas.ParquetDataset
-  filepath: ${globals:data_path}/${_arg.country}/${_arg.lead_id}/outputs/${_arg.provider}_${_arg.field}_payouts.parquet
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/outputs/${_arg.lead_id}/${_arg.provider}_${_arg.field}_payouts.parquet
   save_args:
     compression: GZIP
 
 df_policy:
   type: pandas.ParquetDataset
-  filepath: ${globals:data_path}/${_arg.country}/${_arg.lead_id}/outputs/${_arg.provider}_${_arg.field}_policy.parquet
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/outputs/${_arg.lead_id}/${_arg.provider}_${_arg.field}_policy.parquet
   save_args:
     compression: GZIP
 
 # AEP Data
 df_annual_agg: 
   type: pandas.ParquetDataset
-  filepath: ${globals:data_path}/${_arg.country}/${_arg.lead_id}/outputs/aggregate_annual_losses.parquet
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/outputs/${_arg.lead_id}/aggregate_annual_losses.parquet
   save_args:
     compression: GZIP
 
 df_aep:
   type: pandas.ParquetDataset
-  filepath: ${globals:data_path}/${_arg.country}/${_arg.lead_id}/outputs/aep_curves.parquet
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/outputs/${_arg.lead_id}/aep_curves.parquet
   save_args:
     compression: GZIP
 
 # Quote Data
 df_pricing: 
   type: pandas.ParquetDataset
-  filepath: ${globals:data_path}/${_arg.country}/${_arg.lead_id}/outputs/pricing_quote.parquet
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/outputs/${_arg.lead_id}/pricing_quote.parquet
   save_args:
     compression: GZIP
 
 plt_portfolio:
   type: matplotlib.MatplotlibDataset
-  filepath: ${globals:data_path}/${_arg.country}/${_arg.lead_id}/displays/aep_portfolio.png
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/displays/${_arg.lead_id}/aep_portfolio.png
   save_args:
     bbox_inches: tight
     dpi: 150
 
 plt_aep:
   type: matplotlib.MatplotlibDataset
-  filepath: ${globals:data_path}/${_arg.country}/${_arg.lead_id}/displays/aep_per_crop.png
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/displays/${_arg.lead_id}/aep_per_crop.png
   save_args:
     bbox_inches: tight
     dpi: 150
@@ -146,28 +157,42 @@ plt_aep:
 # Plot Outputs
 plt_variability_map:
   type: matplotlib.MatplotlibDataset
-  filepath: ${globals:data_path}/${_arg.country}/${_arg.lead_id}/displays/variability_map.png
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/displays/${_arg.lead_id}/variability_map.png
   save_args:
     bbox_inches: tight
     dpi: 150
 
 plt_trend_map:
   type: matplotlib.MatplotlibDataset
-  filepath: ${globals:data_path}/${_arg.country}/${_arg.lead_id}/displays/trend_map.png
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/displays/${_arg.lead_id}/trend_map.png
   save_args:
     bbox_inches: tight
     dpi: 150
 
 plt_trigger_freq_map:
   type: matplotlib.MatplotlibDataset
-  filepath: ${globals:data_path}/${_arg.country}/${_arg.lead_id}/displays/trigger_frequency_map.png
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/displays/${_arg.lead_id}/trigger_frequency_map.png
   save_args:
     bbox_inches: tight
     dpi: 150
 
 plt_anomaly_timeseries:
   type: matplotlib.MatplotlibDataset
-  filepath: ${globals:data_path}/${_arg.country}/${_arg.lead_id}/displays/anomaly_timeseries.png
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/displays/${_arg.lead_id}/anomaly_timeseries.png
+  save_args:
+    bbox_inches: tight
+    dpi: 150
+
+plt_activation_map:
+  type: matplotlib.MatplotlibDataset
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/displays/${_arg.lead_id}/activation_map.png
+  save_args:
+    bbox_inches: tight
+    dpi: 150
+
+plt_time_series:
+  type: matplotlib.MatplotlibDataset
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/displays/${_arg.lead_id}/indices_timeseries.png
   save_args:
     bbox_inches: tight
     dpi: 150

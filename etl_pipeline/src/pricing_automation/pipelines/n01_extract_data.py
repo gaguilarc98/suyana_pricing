@@ -64,6 +64,42 @@ def create_geodataframe(
 
     return gdf
 
+
+def count_vertices(geom) -> int:
+    if geom.geom_type == 'Polygon':
+        return sum(len(r.coords) for r in [geom.exterior] + list(geom.interiors))
+    elif geom.geom_type.startswith('Multi') or geom.geom_type == 'GeometryCollection':
+        return sum(count_vertices(g) for g in geom.geoms)
+    return len(geom.coords)
+
+
+def simplify_to_vertex_limit(geom, max_vertices: int, tol_start=0.001, tol_factor=2.0, max_iter=20):
+    """
+    Iteratively simplify a geometry until it has <= max_vertices.
+    Falls back to convex_hull if simplification is too aggressive.
+    """
+    if count_vertices(geom) <= max_vertices:
+        return geom
+
+    tol = tol_start
+    for _ in range(max_iter):
+        simplified = geom.simplify(tol, preserve_topology=True)
+        if count_vertices(simplified) <= max_vertices:
+            return simplified
+        tol *= tol_factor
+
+    # Last resort
+    return geom.convex_hull
+
+
+def simplify_gdf(gdf: gpd.GeoDataFrame, max_vertices: int, **kwargs) -> gpd.GeoDataFrame:
+    gdf = gdf.copy()
+    gdf['geometry'] = gdf['geometry'].apply(
+        lambda g: simplify_to_vertex_limit(g, max_vertices, **kwargs)
+    )
+    return gdf
+
+
 def get_aoi(
     gdf: gpd.GeoDataFrame, 
     params_s: dict = {}
@@ -79,6 +115,7 @@ def get_aoi(
     if gdf.crs is not None and gdf.crs.to_epsg() != 4326:
         gdf = gdf.to_crs(epsg=4326)
     override  = params_s.get('override_gdf', False)
+    simplify = params_s.get('simplify', False)
 
     if {'minx', 'miny', 'maxx', 'maxy'}.issubset(params_s.keys()) and override:
         dict_s = get_bounds(**params_s)
@@ -90,15 +127,19 @@ def get_aoi(
         gdf_aoi = gpd.GeoDataFrame(geometry=polygons, crs="EPSG:4326")
         gdf_aoi['location_id'] = 'ID-000'
     else:
-        gdf = subset_geometry(gdf, params_s)
-        if len(gdf) == 0:
+        # Create GeoDataFrame for post processing
+        gdf = create_geodataframe(gdf, params_s)
+
+        gdf_aoi = subset_geometry(gdf, params_s)
+        if len(gdf_aoi) == 0:
             raise AssertionError('Warning: Geometry slice has no elements')
         # Create bounds from AOI in the form of longitude and latitude borders
-        minx, miny, maxx, maxy = gdf.total_bounds
+        minx, miny, maxx, maxy = gdf_aoi.total_bounds
         dict_s = get_bounds(minx, maxx, maxy, miny, 10)
-        # Create GeoDataFrame for post processing
-        gdf_aoi = create_geodataframe(gdf, params_s)
     
+    if simplify:
+        gdf_aoi = simplify_gdf(gdf_aoi, max_vertices=1400)
+        
     gdf_aoi = add_area_column(gdf_aoi, name_var='area_km2')
     
     return BoundingBox(**dict_s).to_dict(), gdf_aoi
@@ -315,3 +356,109 @@ def extract_data(
           f"{len(all_years) - len(cached) - len(downloaded)} failed")
 
     return {**cached, **downloaded}
+
+
+#—————————————————————————————————————————————
+# REQUEST DATA FROM PLANET
+#—————————————————————————————————————————————
+
+
+def create_planet_subscriptions(
+    params_subscription: dict,
+    params_t: dict,
+    params_s: dict,
+    gdf: gpd.GeoDataFrame,
+    credentials: dict,
+    coordinates=None,
+) -> pd.DataFrame:
+    """
+    Create Planet subscriptions for each area in gdf.
+
+    Args:
+        params_subscription : subscription config (id_column, variable, version, band, prefix, suffix).
+                              Can include 'start_date' and 'end_date' to override params_t derivation.
+        params_t            : temporal config with start_year and end_year. Ignored if
+                              start_date and end_date are set directly in params_subscription.
+        params_s            : spatial bounding parameters passed to subset_geometry.
+        gdf                 : GeoDataFrame of AOIs.
+        credentials         : Planet + AWS credentials.
+        coordinates         : optional fixed coordinate list (overrides gdf geometry).
+
+    Returns:
+        pd.DataFrame with subscription details and keys.
+    """
+    PLANET_FIRST_DATE = pd.Timestamp('2002-06-15')
+    GAP_START         = pd.Timestamp('2011-10-04')
+    GAP_END           = pd.Timestamp('2012-07-24')
+    today             = pd.Timestamp.today().normalize()
+
+    # --- Resolve start_date and end_date ---
+    # params_subscription can override directly, skipping params_t derivation
+    if 'start_date' in params_subscription and 'end_date' in params_subscription:
+        start_date = pd.Timestamp(params_subscription['start_date'])
+        end_date   = pd.Timestamp(params_subscription['end_date'])
+    else:
+        start_year = int(params_t['start_year'])
+        end_year   = int(params_t['end_year'])
+
+        raw_start = pd.Timestamp(f'{start_year}-01-01')
+        if GAP_START <= raw_start <= GAP_END:
+            start_date = GAP_END + pd.Timedelta(days=1)
+        else:
+            start_date = max(raw_start, PLANET_FIRST_DATE)
+
+        raw_end = pd.Timestamp(f'{end_year}-12-31')
+        if GAP_START <= raw_end <= GAP_END:
+            end_date = GAP_START - pd.Timedelta(days=1)
+        elif end_year >= today.year:
+            end_date = today - pd.Timedelta(days=5)
+        else:
+            end_date = raw_end
+
+    # Guard against empty range
+    if start_date > end_date:
+        raise ValueError(
+            f"Resolved date range [{start_date.date()} - {end_date.date()}] is empty. "
+            "The requested period may fall entirely within the Planet data gap (2011-10-04 to 2012-07-24)."
+        )
+
+    # Split around the gap if the period straddles it
+    if start_date < GAP_START and end_date > GAP_END:
+        date_ranges = [
+            (start_date,                     GAP_START - pd.Timedelta(days=1)),  # up to 2011-10-03
+            (GAP_END + pd.Timedelta(days=1), end_date),                          # from 2012-07-25
+        ]
+    else:
+        date_ranges = [(start_date, end_date)]
+
+    id_column  = params_subscription['id_column']
+    gdf        = subset_geometry(gdf, params_s)
+    list_areas = np.sort(gdf[id_column].unique())
+
+    dict_list = []
+    for area_id in list_areas:
+        gdf_request = gdf[gdf[id_column] == area_id].copy()
+        for sd, ed in date_ranges:
+            params_sub_iter = params_subscription.copy()
+            params_sub_iter['start_date'] = sd
+            params_sub_iter['end_date']   = ed
+            dict_params       = get_params_subscription(params_sub_iter, gdf_request, coordinates)
+            dict_subscription = create_subscription(dict_params, credentials)
+            if dict_subscription is not None:
+                dict_list.append(dict_subscription)
+
+    df_sub = pd.DataFrame(dict_list)
+    df_sub['status'] = df_sub['key'].apply(lambda k: get_status(k, credentials))
+
+    pending_status = ['preparing', 'pending']
+    running_status = ['running', 'failed', 'invalid', 'suspended', 'cancelled', 'unsent', 'completed']
+
+    while (
+        df_sub['status'].isin(pending_status).any() and
+        (~df_sub['status'].isin(running_status)).any()
+    ):
+        time.sleep(15)
+        df_sub['status'] = df_sub['key'].apply(lambda k: get_status(k, credentials))
+
+    df_sub = df_sub[df_sub['status'].isin(running_status)].drop(columns=['status'])
+    return df_sub

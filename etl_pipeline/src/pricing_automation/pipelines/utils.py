@@ -21,7 +21,7 @@ import rioxarray
 
 #from rasterio.io import MemoryFile
 from shapely import Polygon, LineString, Point
-from shapely.geometry import box, Point, Polygon, MultiPoint
+from shapely.geometry import box, Polygon, MultiPolygon, Point, MultiPoint
 from scipy.ndimage import uniform_filter, minimum_filter, maximum_filter
 from scipy.spatial import cKDTree
 
@@ -282,6 +282,8 @@ def rename_subset_geometry(gdf, params_s, location_name='location_id'):
     location_var = params_s['location_var']
     if params_s['location_var'] not in gdf.columns:
         raise KeyError(f'The provided variable {location_var} is not present in the columns of GeoDataFrame')
+    if location_name in gdf.columns and location_var != location_name:
+        gdf_subset = gdf_subset.rename(columns={location_name: f'{location_name}_orig'})
     gdf_subset = gdf_subset.rename(columns={location_var: location_name})
     
     return gdf_subset

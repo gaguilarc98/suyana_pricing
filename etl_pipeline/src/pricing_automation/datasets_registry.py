@@ -1,4 +1,5 @@
 import re
+import pandas as pd
 import xarray as xr
 import os
 import fsspec
@@ -7,6 +8,8 @@ from typing import Any, Dict
 from kedro.io import AbstractDataset, AbstractVersionedDataset
 from kedro.io.core import get_protocol_and_path, get_filepath_str, Version
 
+from deltalake import DeltaTable
+from deltalake.writer import write_deltalake
 
 PROTOCOL_DELIMITER = "://"
 
@@ -216,3 +219,88 @@ class ZarrPartitionedDataset(AbstractDataset):
 
     def _exists(self) -> bool:
         return len(self._fs.glob(self._glob_pattern())) > 0
+
+
+class DeltaLakeDataset(AbstractDataset):
+    """
+    Kedro dataset for DeltaLake tables on S3 or local filesystem.
+
+    Saves: pd.DataFrame -> DeltaLake table
+    Loads: DeltaLake table -> pd.DataFrame
+
+    Example filepaths:
+        s3://my-bucket/tables/my_table
+        data/03_primary/my_table
+    """
+
+    def __init__(
+        self,
+        filepath: str,
+        load_args: Dict[str, Any] | None = None,
+        save_args: Dict[str, Any] | None = None,
+        credentials: Dict[str, Any] | None = None,
+        fs_args: Dict[str, Any] | None = None,
+    ):
+        protocol, path = get_protocol_and_path(filepath)
+        self._protocol = protocol
+        self._filepath = PurePosixPath(path)
+
+        _fs_args = fs_args or {}
+        _credentials = credentials or {}
+
+        if protocol == "file":
+            _fs_args.setdefault("auto_mkdir", True)
+
+        self._fs = fsspec.filesystem(protocol, **_credentials, **_fs_args)
+        self._load_args = load_args or {}
+        self._save_args = save_args or {"mode": "append"}
+
+    def _describe(self) -> Dict[str, Any]:
+        return {
+            "filepath": self._filepath,
+            "protocol": self._protocol,
+            "load_args": self._load_args,
+            "save_args": self._save_args,
+        }
+
+    def _full_path(self) -> str:
+        return self._fs.unstrip_protocol(str(self._filepath))
+
+    def _load(self) -> pd.DataFrame:
+        df = DeltaTable(self._full_path()).to_pandas(**self._load_args)
+        #for col in df.select_dtypes(include=["datetime64[ns, UTC]"]).columns:
+        #    df[col] = df[col].dt.tz_convert(None)
+        return df
+    
+    #def _prepare_data(self, data: pd.DataFrame) -> pd.DataFrame:
+    #    for col in data.select_dtypes(include=["datetime64[ns]"]).columns:
+    #        data[col] = data[col].dt.tz_localize("UTC")
+    #    return data
+
+    def _save(self, data: pd.DataFrame) -> None:
+        write_deltalake(self._full_path(), data, **self._save_args)
+    '''
+    def _upsert(self, data: pd.DataFrame) -> None:
+        dt = DeltaTable(self._full_path())
+        merge_condition = " AND ".join(
+            [f"source.{k} = target.{k}" for k in self._merge_keys]
+        )
+        (
+            dt.merge(
+                source=data,
+                predicate=merge_condition,
+                source_alias="source",
+                target_alias="target",
+            )
+            .when_matched_update_all()
+            .when_not_matched_insert_all()
+            .execute()
+        )
+    '''
+
+    def _exists(self) -> bool:
+        try:
+            DeltaTable(self._full_path())
+            return True
+        except Exception:
+            return False
