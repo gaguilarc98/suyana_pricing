@@ -480,6 +480,12 @@ def process_data_planet(
     ds_gap = clean_data(ds_gap, date_range=period_era5)
     print(f"CDF matching done")
 
+    # Drop any scalar coordinates that ERA5 adds (e.g. 'expver') and are
+    # absent from Planet datasets — they cause xr.concat to fail.
+    extra_coords = [c for c in ds_gap.coords if c not in ds_period1.coords and c not in ds_period2.coords]
+    if extra_coords:
+        ds_gap = ds_gap.drop_vars(extra_coords)
+
     # Join and smooth the resulting time series
     ds_concat = xr.concat([ds_period1, ds_gap, ds_period2], dim='time')
     print(f"Concatenating arrays done")
@@ -489,7 +495,7 @@ def process_data_planet(
     ds_concat, ds_clim = get_climatology(
         ds_concat, 'swc_adjusted', 'climatology', level='dayofyear', smooth_window=clim_smooth_window
     )
-    ds_concat = add_neg_anomaly(ds_concat, 'swc_adjusted', 'climatology')
+    ds_concat = add_neg_anomaly(ds_concat, 'swc_adjusted', 'climatology', keep_neg_anom=False)
     print('Climatology and anomaly successfully added')
 
     df_concat = ds_concat.to_dataframe().reset_index()

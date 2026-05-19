@@ -29,13 +29,28 @@ from scipy import stats
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _period_label(params_process: dict) -> str:
-    t0 = pd.to_datetime(params_process["time_window"][0]).year
-    t1 = pd.to_datetime(params_process["time_window"][1]).year
+    tw = params_process["time_window"]
+    if isinstance(tw, dict):
+        t0 = pd.to_datetime(tw["full"][0]).year
+        t1 = pd.to_datetime(tw["full"][1]).year
+    else:
+        t0 = pd.to_datetime(tw[0]).year
+        t1 = pd.to_datetime(tw[1]).year
     return f"{t0}–{t1}"
 
 
 def _anom_var(params_process: dict) -> str:
+    if "anom_variable" in params_process:
+        return f"anom_{params_process['anom_variable']}"
     return f"anom_{params_process['variable']}"
+
+
+def _time_window(params_process: dict):
+    """Return (t0, t1) regardless of ERA5-list or Planet-dict layout."""
+    tw = params_process["time_window"]
+    if isinstance(tw, dict):
+        return tw["full"][0], tw["full"][1]
+    return tw[0], tw[1]
 
 
 def _da_to_gdf(da: xr.DataArray) -> gpd.GeoDataFrame:
@@ -72,7 +87,7 @@ def plot_variability_map(
     """
     var = _anom_var(params_process)
     period = _period_label(params_process)
-    t0, t1 = params_process["time_window"]
+    t0, t1 = _time_window(params_process)
 
     # Annual mean per pixel, then std across years
     da_annual = ds_processed[var].sel(time=slice(t0, t1)).resample(time="1YE").mean()
@@ -154,8 +169,9 @@ def plot_trend_map(
     Units: variable / decade. Positive = drying; negative = wetting.
     """
     var = _anom_var(params_process)
-    t0 = pd.to_datetime(params_process["time_window"][0])
-    t1 = pd.to_datetime(params_process["time_window"][1])
+    _t0, _t1 = _time_window(params_process)
+    t0 = pd.to_datetime(_t0)
+    t1 = pd.to_datetime(_t1)
 
     da = ds_processed[var].sel(time=slice(str(t0.date()), str(t1.date())))
     trend = _compute_trend_da(da)
@@ -294,8 +310,8 @@ def plot_anomaly_timeseries(
     df = df_cluster.copy()
     df["time"] = pd.to_datetime(df["time"])
 
-    t0, t1 = params_process["time_window"]
-    df = df[(df["time"] >= t0) & (df["time"] <= t1)]
+    t0, t1 = _time_window(params_process)
+    df = df[(df["time"] >= t0) & (df["time"] <= (t1 or df["time"].max()))]
 
     # Annual portfolio mean
     annual = (

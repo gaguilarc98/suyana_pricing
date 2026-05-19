@@ -110,6 +110,74 @@ def create_pipeline_moisture() -> Pipeline:
     return extract_pipeline + process_pipeline + load_pipeline
 
 
+def create_pipeline_planet() -> Pipeline:
+    """Pipeline for Planet AMSRE/AMSR2 soil moisture.
+
+    Uses pre-existing zarr partitions in S3 (partitioned by location_id):
+      planet_amsre  → PLANET_AMSRE_swc_<location_id>.zarr
+      planet_amsr2  → PLANET_AMSR2_swc_<location_id>.zarr
+      era5_gap      → ERA5_swc_<year>.zarr  (gap-fill bridge)
+    """
+    return Pipeline([
+        node(
+            func=get_aoi,
+            inputs=['gdf_request', 'params:params_s'],
+            outputs=['dict_bounds', 'gdf_aoi'],
+            name='get_aoi',
+            tags=['extract'],
+        ),
+        node(
+            func=process_data_planet,
+            inputs=['planet_amsre', 'planet_amsr2', 'era5_gap', 'gdf_aoi', 'params:params_process'],
+            outputs=['df_cluster', 'ds_climatology'],
+            name='process_data_planet',
+            tags=['process'],
+        ),
+        node(
+            func=generate_triggers,
+            inputs=['df_cluster', 'params:create_trigger', 'params:params_request'],
+            outputs=['df_triggers', 'df_percentiles'],
+            name='generate_triggers',
+            tags=['triggers'],
+        ),
+        node(
+            func=run_bootstrap_aep,
+            inputs=['df_triggers', 'gdf_aoi', 'params:params_bootstrap'],
+            outputs=['df_annual_agg', 'df_aep'],
+            name='run_bootstrap_aep',
+            tags=['aep', 'pricing'],
+        ),
+        node(
+            func=run_pricing_quote,
+            inputs=['df_annual_agg', 'params:params_quote'],
+            outputs='df_pricing',
+            name='run_pricing_quote',
+            tags=['pricing'],
+        ),
+        node(
+            func=plot_aep,
+            inputs=['df_annual_agg', 'df_aep', 'params:params_process'],
+            outputs=['plt_portfolio', 'plt_aep'],
+            name='plot_aep',
+            tags=['pricing'],
+        ),
+        node(
+            func=plot_trigger_frequency_map,
+            inputs=['df_triggers', 'gdf_aoi', 'params:create_trigger'],
+            outputs='plt_trigger_freq_map',
+            name='plot_trigger_frequency_map',
+            tags=['viz'],
+        ),
+        node(
+            func=plot_anomaly_timeseries,
+            inputs=['df_cluster', 'params:params_process'],
+            outputs='plt_anomaly_timeseries',
+            name='plot_anomaly_timeseries',
+            tags=['viz'],
+        ),
+    ])
+
+
 def create_pipeline_temperature() -> Pipeline:
     extract_pipeline = base_pipeline()
     process_pipeline = Pipeline([

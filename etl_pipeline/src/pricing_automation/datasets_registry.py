@@ -202,8 +202,24 @@ class ZarrPartitionedDataset(AbstractDataset):
     def _glob_pattern(self) -> str:
         return re.sub(r"<[^>]+>", "*", str(self._filepath))
 
+    def _list_stores(self) -> list:
+        """List matching zarr stores using ls+filter (more reliable than glob on S3)."""
+        pattern = self._glob_pattern()
+        parent = str(self._filepath.parent)
+        basename_pattern = re.sub(r"<[^>]+>", "*", self._filepath.name)  # e.g. 'PLANET_AMSR2_swc_*.zarr'
+        try:
+            entries = self._fs.ls(parent, detail=False)
+        except FileNotFoundError:
+            return []
+        import fnmatch
+        matches = sorted(
+            e for e in entries
+            if fnmatch.fnmatch(e.split("/")[-1], basename_pattern)
+        )
+        return matches
+
     def _load(self) -> xr.Dataset:
-        matches = sorted(self._fs.glob(self._glob_pattern()))
+        matches = self._list_stores()
         if not matches:
             raise FileNotFoundError(f"No Zarr stores matching {self._glob_pattern()}")
         stores = [self._fs.unstrip_protocol(p) for p in matches]
@@ -215,4 +231,4 @@ class ZarrPartitionedDataset(AbstractDataset):
             ds.to_zarr(store, **self._save_args)
 
     def _exists(self) -> bool:
-        return len(self._fs.glob(self._glob_pattern())) > 0
+        return len(self._list_stores()) > 0

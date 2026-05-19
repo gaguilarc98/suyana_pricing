@@ -39,9 +39,13 @@ def run_pricing_quote(df, params_quote):
     return pricing
 
 def plot_aep(df_hist, df_boot, params_process):
-        
-    start_year = pd.to_datetime(params_process["time_window"][0]).year
-    end_year = pd.to_datetime(params_process["time_window"][1]).year
+    tw = params_process["time_window"]
+    if isinstance(tw, dict):
+        t0, t1 = tw["full"][0], tw["full"][1]
+    else:
+        t0, t1 = tw[0], tw[1]
+    start_year = pd.to_datetime(t0).year
+    end_year = pd.to_datetime(t1).year
    
     # -------------------------------------------------------------------------
     # Plot 1: Portfolio AEP

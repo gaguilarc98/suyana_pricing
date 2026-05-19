@@ -8,7 +8,7 @@
 # Use snake_case style for uniformity e.g. costa_rica, 'swiss_re', 'bisa_seguros'
 _arg:
   country: ${runtime_params:country, ${globals:country}}
-  lead_id: ${runtime_params:lead_id, 'test1'}
+  lead_id: ${runtime_params:lead_id, 'valles'}
   provider: ${runtime_params:provider, ${globals:provider}}
   field: ${runtime_params:field, ${globals:field}}
   version: ${runtime_params:version, ${globals:version}}
@@ -16,10 +16,32 @@ _arg:
 # Geometry Data
 gdf_request:
   type: geopandas.GenericDataset
-  filepath: /Users/daniela/Documents/suyana/pricing-automation/data/geometries/CO_municipios.parquet
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.lead_id}/geometries/location_geometries.parquet
   file_format: parquet
   save_args:
     compression: GZIP
+
+# Planet source data (pre-existing in S3, partitioned by location_id)
+planet_amsre:
+  type: pricing_automation.datasets_registry.ZarrPartitionedDataset
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.lead_id}/sources/PLANET_AMSRE_swc_<partition>.zarr
+  load_args:
+    combine: by_coords
+    parallel: true
+
+planet_amsr2:
+  type: pricing_automation.datasets_registry.ZarrPartitionedDataset
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.lead_id}/sources/PLANET_AMSR2_swc_<partition>.zarr
+  load_args:
+    combine: by_coords
+    parallel: true
+
+era5_gap:
+  type: pricing_automation.datasets_registry.ZarrPartitionedDataset
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.lead_id}/sources/ERA5_swc_<partition>.zarr
+  load_args:
+    combine: by_coords
+    parallel: true
 
 # Request Data:
 '{namespace}.dict_bounds':
@@ -46,6 +68,7 @@ gdf_request:
   save_args:
     consolidated: true
     mode: w
+    zarr_format: 2
   load_args:
     combine: by_coords
     parallel: true
@@ -57,18 +80,20 @@ gdf_request:
   save_args:
     consolidated: true
     mode: w
+    zarr_format: 2
     append_dim: time
     chunks: {'time': 1800, 'lat': -1, 'lon': -1}
     safe_chunks: false
   load_args:
     consolidated: true
 
-'{namespace}.ds_climatology': 
+'{namespace}.ds_climatology':
   type: pricing_automation.datasets_registry.XarrayZarrDataset
   filepath: ${globals:data_path}/${_arg.country}/${_arg.lead_id}/features/${_arg.provider}_${_arg.field}_climatology.zarr
   save_args:
     consolidated: true
     mode: w
+    zarr_format: 2
     append_dim: climate_area_id
   load_args:
     consolidated: true
