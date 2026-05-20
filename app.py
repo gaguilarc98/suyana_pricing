@@ -59,6 +59,8 @@ def get_aws_env(key: str = "", secret: str = "", token: str = "") -> dict:
     return env
 
 
+LOCAL_DATA_PATH = Path.home() / "suyana_data"
+
 def s3_outputs(country: str, lead_id: str = "valles") -> dict:
     """Return a dict of label → S3 path for all pipeline outputs."""
     base = f"s3://suyana-pricing/{country}/{lead_id}"
@@ -69,6 +71,19 @@ def s3_outputs(country: str, lead_id: str = "valles") -> dict:
         "aep_crop":   f"{base}/displays/aep_per_crop.png",
         "trigger_map":f"{base}/displays/trigger_frequency_map.png",
         "anomaly":    f"{base}/displays/anomaly_timeseries.png",
+    }
+
+
+def local_outputs(country: str, lead_id: str) -> dict:
+    """Return a dict of label → local Path for all pipeline outputs."""
+    base = LOCAL_DATA_PATH / country / lead_id
+    return {
+        "pricing":    base / "outputs" / "pricing_quote.parquet",
+        "triggers":   base / "outputs" / "ERA5_swc_window_triggers.parquet",
+        "aep":        base / "displays" / "aep_portfolio.png",
+        "aep_crop":   base / "displays" / "aep_per_crop.png",
+        "trigger_map":base / "displays" / "trigger_frequency_map.png",
+        "anomaly":    base / "displays" / "anomaly_timeseries.png",
     }
 
 
@@ -106,7 +121,7 @@ def write_params(pipeline: str, country: str, locations: list[str],
                  use_local: bool = False):
     """Overwrite globals.yml and relevant sections of parameters.yml for the run."""
     if use_local:
-        data_path = str(REPO_ROOT / "data")
+        data_path = str(LOCAL_DATA_PATH)
     else:
         data_path = "s3://suyana-pricing"
 
@@ -349,9 +364,14 @@ class App(tk.Tk):
         # Hide/show AWS section
         if is_local:
             self._aws_frame.pack_forget()
+            # Enable result buttons immediately — local files may already exist
+            self._enable_results()
         else:
             self._aws_frame.pack(fill="x", padx=16, pady=4,
                                   before=self._cfg_frame)
+            # Disable result buttons until a run completes (S3 mode)
+            for b in self._result_btns:
+                b.config(state="disabled")
 
     # ── Credentials ───────────────────────────────────────────────────────────
 
@@ -503,8 +523,19 @@ class App(tk.Tk):
     # ── Results popups ────────────────────────────────────────────────────────
 
     def _show_image(self, key: str):
-        country = self.country_var.get()
-        paths   = s3_outputs(country)
+        country  = self.country_var.get()
+        lead_id  = self.lead_id_var.get().strip() or "valles"
+        use_local = self.data_loc_var.get() == "Local"
+
+        if use_local:
+            local = local_outputs(country, lead_id)[key]
+            if not local.exists():
+                self._log(f"❌ File not found: {local}", "ERROR")
+                return
+            self._open_image_window(local, key)
+            return
+
+        paths   = s3_outputs(country, lead_id)
         s3_path = paths[key]
 
         def _load():
@@ -540,8 +571,21 @@ class App(tk.Tk):
         win.lift()
 
     def _show_pricing(self):
-        country = self.country_var.get()
-        paths   = s3_outputs(country)
+        country   = self.country_var.get()
+        lead_id   = self.lead_id_var.get().strip() or "valles"
+        use_local = self.data_loc_var.get() == "Local"
+
+        if use_local:
+            local = local_outputs(country, lead_id)["pricing"]
+            if not local.exists():
+                self._log(f"❌ File not found: {local}", "ERROR")
+                return
+            import pandas as pd
+            df = pd.read_parquet(local)
+            self._open_table_window(df, "Pricing Quote")
+            return
+
+        paths = s3_outputs(country, lead_id)
 
         def _load():
             try:

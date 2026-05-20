@@ -39,10 +39,21 @@ def _period_label(params_process: dict) -> str:
     return f"{t0}–{t1}"
 
 
-def _anom_var(params_process: dict) -> str:
-    if "anom_variable" in params_process:
-        return f"anom_{params_process['anom_variable']}"
-    return f"anom_{params_process['variable']}"
+def _anom_var(params_process: dict, ds=None) -> str:
+    """Return the anomaly variable name, auto-detecting from dataset if needed."""
+    variable = params_process.get("variable")
+    # Planet-style: variable is a dict → use the explicit anom_variable key
+    if isinstance(variable, dict):
+        anom_v = params_process.get("anom_variable", "swc_adjusted")
+        candidate = f"anom_{anom_v}"
+    else:
+        candidate = f"anom_{variable}"
+    # If the candidate doesn't exist in the dataset, fall back to first anom_* var
+    if ds is not None and candidate not in ds.data_vars:
+        anom_vars = [v for v in ds.data_vars if str(v).startswith("anom_")]
+        if anom_vars:
+            candidate = str(anom_vars[0])
+    return candidate
 
 
 def _time_window(params_process: dict):
@@ -85,7 +96,7 @@ def plot_variability_map(
     ------
     matplotlib Figure
     """
-    var = _anom_var(params_process)
+    var = _anom_var(params_process, ds_processed)  # type: ignore[name-defined]  # ds_processed is in scope here
     period = _period_label(params_process)
     t0, t1 = _time_window(params_process)
 
@@ -105,13 +116,12 @@ def plot_variability_map(
 
     gdf_aoi.boundary.plot(ax=ax, linewidth=0.4, color="#555555", zorder=3)
 
-    ax.set_title(
-        f"SWC Inter-annual Variability · {period}",
-        fontsize=13, fontweight="bold", pad=10,
-    )
+    ax.set_title(f"SWC Inter-annual Variability · {period}", fontsize=13, loc="left", pad=10)
     ax.set_xlabel("Longitude", fontsize=10)
     ax.set_ylabel("Latitude", fontsize=10)
     ax.tick_params(labelsize=8)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
     plt.tight_layout()
     plt.close(fig)
     return fig
@@ -168,7 +178,7 @@ def plot_trend_map(
     Full-period linear trend per pixel with contextily basemap.
     Units: variable / decade. Positive = drying; negative = wetting.
     """
-    var = _anom_var(params_process)
+    var = _anom_var(params_process, ds_processed)
     _t0, _t1 = _time_window(params_process)
     t0 = pd.to_datetime(_t0)
     t1 = pd.to_datetime(_t1)
@@ -196,7 +206,7 @@ def plot_trend_map(
     cb.set_label(f"Trend  [{params_process['variable']} / decade]", fontsize=10)
     cb.ax.axhline(0, color="white", linewidth=1.5)
 
-    ax.set_title(f"SWC Trend · {t0.year}–{t1.year}", fontsize=13, fontweight="bold")
+    ax.set_title(f"SWC Trend · {t0.year}–{t1.year}", fontsize=13, loc="left")
     ax.set_axis_off()
     plt.tight_layout()
     plt.close(fig)
@@ -265,15 +275,12 @@ def plot_trigger_frequency_map(
         },
     )
 
-    ax.set_title(
-        "Trigger Activation Frequency by Location",
-        fontsize=13,
-        fontweight="bold",
-        pad=10,
-    )
+    ax.set_title("Trigger Activation Frequency by Location", fontsize=13, loc="left", pad=10)
     ax.set_xlabel("Longitude", fontsize=10)
     ax.set_ylabel("Latitude", fontsize=10)
     ax.tick_params(labelsize=8)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
     plt.tight_layout()
     plt.close(fig)
     return fig
@@ -301,7 +308,11 @@ def plot_anomaly_timeseries(
     ------
     matplotlib Figure
     """
+    # df_cluster is a DataFrame — detect anomaly column from it directly
+    anom_cols = [c for c in df_cluster.columns if str(c).startswith("anom_")]
     var = _anom_var(params_process)
+    if var not in df_cluster.columns and anom_cols:
+        var = anom_cols[0]
     period = _period_label(params_process)
 
     if var not in df_cluster.columns:
@@ -345,13 +356,11 @@ def plot_anomaly_timeseries(
 
     ax.set_xlabel("Year", fontsize=11)
     ax.set_ylabel(f"Mean anomaly  [{params_process['variable']}]", fontsize=11)
-    ax.set_title(
-        f"Annual Mean Anomaly — Portfolio · {period}",
-        fontsize=13,
-        fontweight="bold",
-    )
-    ax.legend(fontsize=10)
+    ax.set_title(f"Annual Mean Anomaly — Portfolio · {period}", fontsize=13, loc="left")
+    ax.legend(fontsize=10, frameon=False)
     ax.grid(axis="y", alpha=0.3)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
     ax.set_xlim(x.min() - 0.5, x.max() + 0.5)
     ax.xaxis.set_major_locator(mticker.MultipleLocator(5))
     ax.xaxis.set_minor_locator(mticker.MultipleLocator(1))

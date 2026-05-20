@@ -426,6 +426,18 @@ def generate_triggers(
     windows = params['windows']
     variable = params['variable']
     group_cols = params.get('group_cols', 'location_id')
+
+    # If the configured variable doesn't exist in the dataframe, fall back to
+    # the first anom_* column (handles ERA5 vs Planet naming differences)
+    if variable not in df_hist.columns:
+        anom_cols = [c for c in df_hist.columns if c.startswith('anom_')]
+        if anom_cols:
+            import logging
+            logging.getLogger(__name__).warning(
+                f"create_trigger variable '{variable}' not found in dataframe; "
+                f"using '{anom_cols[0]}' instead."
+            )
+            variable = anom_cols[0]
     percentile_dict = params['percentile_dict']
     dist = params['dist']
 

@@ -72,6 +72,7 @@ era5_gap:
   load_args:
     combine: by_coords
     parallel: true
+    drop_variables: ['expver', 'number']
 
 # Index Data
 '{namespace}.ds_processed':

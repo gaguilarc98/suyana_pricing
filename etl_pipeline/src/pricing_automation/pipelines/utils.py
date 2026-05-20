@@ -219,11 +219,17 @@ def match_grid_points(ds_sample, df_target, sample_coords = ('lon', 'lat'), targ
         df_s = ds_sample[[lon_sample, lat_sample]].to_dataframe().reset_index()
 
     # Nearest Neighbor Algorithm
+    if len(df_s) == 0:
+        # No valid sample points — return target unchanged
+        return df_target
+    # Cap k to available points to avoid out-of-bounds indices
+    k_actual = min(k, len(df_s))
     tree = cKDTree(df_s)
-    dist, idx = tree.query(df_t[[lon_target, lat_target]], k=k)
+    dist, idx = tree.query(df_t[[lon_target, lat_target]], k=k_actual)
 
     # Join Sample coordinate to target coordinates
-    df_join = df_s.iloc[idx.flatten()].copy()
+    idx_flat = np.clip(np.asarray(idx).flatten(), 0, len(df_s) - 1)
+    df_join = df_s.iloc[idx_flat].copy()
     df_join['index'] = np.repeat(df_t.index, k)
     df_join["distance"] = dist.flatten()
     df_target = df_target.merge(
@@ -242,10 +248,23 @@ def select_coordinates(ds, gdf_target, grid_coords = ('lon', 'lat')):
     lon_grid, lat_grid = grid_coords
     ds_stacked = ds.stack(points = (lat_grid, lon_grid))
 
-    # Get coordinates from weather stations
+    # Get coordinates from target
     df_coords_station = gdf_target[[lat_grid, lon_grid]].drop_duplicates().reset_index(drop=True)
+
+    # Snap target coordinates to the nearest actual grid values to avoid
+    # floating-point precision mismatches between the DataFrame and the
+    # stacked MultiIndex.
+    grid_lats = ds[lat_grid].values
+    grid_lons = ds[lon_grid].values
+
+    def _snap(val, grid):
+        return grid[int(np.argmin(np.abs(grid - val)))]
+
+    df_coords_station[lat_grid] = df_coords_station[lat_grid].apply(lambda v: _snap(v, grid_lats))
+    df_coords_station[lon_grid] = df_coords_station[lon_grid].apply(lambda v: _snap(v, grid_lons))
+
     target_index = pd.MultiIndex.from_frame(df_coords_station)
-    
+
     #Subset the Master Table with locations of interest
     ds_subset = ds_stacked.sel(points=target_index)
     return ds_subset
