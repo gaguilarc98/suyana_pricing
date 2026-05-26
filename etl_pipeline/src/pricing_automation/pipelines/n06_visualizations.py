@@ -414,7 +414,10 @@ def create_activation_map(
     list_years = sorted(gdf_season['window_year'].dropna().unique().astype(int))
     n_years    = len(list_years)
  
-    if n_years <= 15:
+    if n_years <= 5:
+        fig, ax = plt.subplots(1, n_years, figsize=(5*n_years, 6))
+        years = np.arange(min(list_years), max(list_years)+1, 1)
+    elif n_years <= 15:
         fig, ax = plt.subplots(3, 5, figsize=(18, 14.5))
         years = np.arange(min(list_years), min(list_years) + 15, 1)
     elif n_years <= 20:
@@ -453,7 +456,7 @@ def create_activation_map(
  
     plt.suptitle(
         f"Activation map -- {season_name} | window {window} | {crop} | {tail} tail",
-        fontsize=14, y=0.94
+        fontsize=14, y=0.96
     )
     #plt.tight_layout()
     plt.close(fig)

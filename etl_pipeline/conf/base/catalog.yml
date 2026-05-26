@@ -17,7 +17,7 @@ _arg:
 # Geometry Data
 gdf_request:
   type: geopandas.GenericDataset
-  filepath: ${globals:data_path}/geometries/${_arg.country}_polygons.parquet
+  filepath: s3://suyana-pricing/geometries/${_arg.country}_${_arg.region}_polygons.parquet #${globals:data_path}
   file_format: parquet
   save_args:
     compression: GZIP
@@ -45,7 +45,8 @@ ds_request:
   #type: pricing_automation.datasets_registry.NetCDFPartitionedDataset
   #filepath: data/${_arg.country}/sources/${_arg.provider}/${_arg.field}_<partition>.nc
   type: pricing_automation.datasets_registry.ZarrPartitionedDataset
-  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/sources/${_arg.provider}_${_arg.field}_<partition>.zarr
+  filepath: s3://suyana-ews/${_arg.country}/sources/UCSB_prcp_<partition>.zarr
+  #filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/sources/${_arg.provider}_${_arg.field}_<partition>.zarr
   save_args:
     consolidated: true
     mode: w
@@ -185,14 +186,14 @@ plt_anomaly_timeseries:
 
 plt_activation_map:
   type: matplotlib.MatplotlibDataset
-  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/displays/${_arg.lead_id}/activation_map.png
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/displays/${_arg.lead_id}/activation_map_excess_last_3.png
   save_args:
     bbox_inches: tight
     dpi: 150
 
 plt_time_series:
   type: matplotlib.MatplotlibDataset
-  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/displays/${_arg.lead_id}/indices_timeseries.png
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/displays/${_arg.lead_id}/indices_timeseries_deficit.png
   save_args:
     bbox_inches: tight
     dpi: 150

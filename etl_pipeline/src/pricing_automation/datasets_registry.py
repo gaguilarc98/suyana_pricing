@@ -138,15 +138,26 @@ class XarrayZarrDataset(AbstractVersionedDataset[xr.Dataset, xr.Dataset]):
         save_args = self._save_args.copy()
         save_path = self._full_path()
 
+        mode = save_args.get("mode", "w")
         chunking = save_args.pop("chunks", None)
 
         # Remove append_dim if writing fresh
-        if not self._exists() or save_args.get("mode") == "w":
+        if not self._exists() or mode == "w":
             save_args.pop("append_dim", None)
 
-        if chunking:
-            valid_chunks = {k: v for k, v in chunking.items() if k in data.dims}
-            data = data.chunk(valid_chunks)
+            if chunking:
+                for var in data.data_vars:
+                    data[var].encoding.pop("chunks", None)
+                valid_chunks = {k: v for k, v in chunking.items() if k in data.dims}
+                data = data.chunk(valid_chunks)
+
+        elif mode == "a":
+            # Do NOT rechunk on append. Rechunking would produce misaligned chunks along the append dimension.
+            if "append_dim" not in save_args:
+                raise ValueError(
+                    "save_args must include 'append_dim' when mode='a'. "
+                    "Example: save_args: {mode: a, append_dim: time}"
+                )
 
         data.to_zarr(save_path, **save_args)
 

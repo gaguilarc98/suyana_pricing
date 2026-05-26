@@ -13,7 +13,32 @@ from typing import List, Optional, Dict, Literal, Union
 from .a01_aoi_period import BoundingBox, get_year_list
 
 MIN_VALID_DAYS = 300
-WORKERS_PER_YEAR = 1
+WORKERS_PER_YEAR = 4   # safe ceiling for concurrent FTP connections to CHC server
+
+_MONTHS = [f"{m:02d}" for m in range(1, 13)]
+_DAYS = [f"{d:02d}" for d in range(1, 32)]
+
+def _download_ftp(url: str, retries: int = 3, timeout: int = 60) -> bytes:
+    """
+    Download a file over FTP, return raw bytes.
+    Args:
+        - url     : FTP URL to fetch
+        - retries : number of retry attempts on failure
+        - timeout : seconds before connection times out
+    Returns:
+        Raw bytes of the downloaded file
+    """
+    from urllib.request import urlopen
+    from urllib.error import URLError
+    for attempt in range(retries):
+        try:
+            with urlopen(url, timeout=timeout) as r:
+                return r.read()
+        except URLError as e:
+            if attempt < retries - 1:
+                time.sleep(2 ** attempt)   # 1s, 2s backoff
+                continue
+            raise
 
 
 #——————————————————————————————————————————————
@@ -66,7 +91,7 @@ def get_url_ucsb(
     Returns:
         URL to access data.
     """
-    PATH = f'https://data.chc.ucsb.edu/products'
+    PATH = 'ftp://ftp.chc.ucsb.edu/pub/org/chc/products'
     if origin not in ['CHIRTS', 'CHIRTS-ERA5', 'CHIRPS-GEFS', 'CHIRPS-GEFS-v12', 'CHIRPS', 'CHIRPS-v2', 'CHIRPS-v3-ERA5', 'CHIRPS-v3-IMERG']:
         raise NotImplementedError(f'{origin} not implemented.')
 
@@ -77,7 +102,7 @@ def get_url_ucsb(
             raise NotImplementedError(f'{freq} not implemented for origin {origin}')
     elif origin == 'CHIRTS-ERA5':
         if freq == 'daily':
-            PRODUCT = f'https://data.chc.ucsb.edu/experimental/CHIRTS-ERA5'
+            PRODUCT = f'ftp://ftp.chc.ucsb.edu/pub/org/chc/experimental/CHIRTS-ERA5'
         else:
             raise NotImplementedError(f'{freq} not implemented for origin {origin}')
     elif origin == 'CHIRPS-GEFS':
@@ -208,22 +233,19 @@ class UCSBDownloader(DataDownloader):
         with self._lock:
             print(msg)
 
-
     def _download_day(
         self, date: pd.Timestamp
     ) -> Optional[xr.Dataset]:
-        """Download and process a single date's raster data."""
+        """Download and process a single date's raster data via FTP."""
         params_request = self.params_request.to_dict()
         dict_var_name = {'PRCP': 'prcp', 'TN': 'tmin', 'TX': 'tmax', 'RH': 'rh'}
         variable = str(params_request['variable'])
         try:
             url_file = get_url_ucsb(date.strftime('%Y-%m-%d'), **params_request)
-            session = requests.Session()
+            content = _download_ftp(url_file)
 
             if url_file.endswith('.gz'):
-                r = session.get(url_file, stream=True)
-                r.raise_for_status()
-                with io.BytesIO(gzip.decompress(r.content)) as tif_stream:
+                with io.BytesIO(gzip.decompress(content)) as tif_stream:
                     with rioxarray.open_rasterio(tif_stream) as ds:
                         ds = ds.rio.clip_box(**self.aoi.to_dict())
                         ds = ds.squeeze().rename({'x': 'lon', 'y': 'lat'})
@@ -231,14 +253,12 @@ class UCSBDownloader(DataDownloader):
                         ds = ds.load()
 
             elif url_file.endswith('.tif'):
-                r = session.get(url_file, stream=True)
-                r.raise_for_status()
-                with io.BytesIO(r.content) as tif_stream:
+                with io.BytesIO(content) as tif_stream:
                     with rioxarray.open_rasterio(tif_stream) as ds:
                         ds = ds.rio.clip_box(**self.aoi.to_dict())
                         ds = ds.squeeze().rename({'x': 'lon', 'y': 'lat'})
                         ds = ds.expand_dims({'time': [date]})
-                        ds = ds.load()  # force load before context manager closes
+                        ds = ds.load()
 
             print(f'{date.strftime("%Y%m%d")}', end=' ')
             return ds.to_dataset(name=dict_var_name[variable])
@@ -296,8 +316,6 @@ class UCSBDownloader(DataDownloader):
 # ERA5 DOWNLOADER
 #——————————————————————————————————————————————
 
-_MONTHS = [f"{m:02d}" for m in range(1, 13)]
-_DAYS = [f"{d:02d}" for d in range(1, 32)]
 
 def _normalise_hours(hours: List[str]) -> List[str]:
     return [f"{h}:00" if ":" not in h else h for h in hours]
@@ -622,5 +640,3 @@ def get_status(
         return sub_status
     except:
         return 'unsent'
-    
-

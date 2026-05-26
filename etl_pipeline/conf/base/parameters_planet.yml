@@ -81,3 +81,4 @@ params_process_planet:
   cdf_time_window: 45
   time_smooth_window: 21
   climatology_smooth_window: 7
+  add_neg_anom: true

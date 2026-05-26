@@ -72,14 +72,20 @@ PERIL_CONFIGS: dict[tuple, dict] = {
         time=["00"],
     ),
     ("ERA5", "tmin"): dict(
-        product_type="reanalysis-era5-single-levels",
-        variable=["minimum_2m_temperature_since_previous_post_processing"],
-        time=["06"],
+        product_type="derived-era5-land-daily-statistics",#"reanalysis-era5-single-levels",
+        variable=["2m_temperature"],#["minimum_2m_temperature_since_previous_post_processing"],
+        daily_statistic="daily_minimum",
+        time_zone="utc-04:00",
+        frequency="1_hourly",
+        #time=["06"],
     ),
     ("ERA5", "tmax"): dict(
-        product_type="reanalysis-era5-single-levels",
-        variable=["maximum_2m_temperature_since_previous_post_processing"],
-        time=["18"],
+        product_type="derived-era5-land-daily-statistics",#"reanalysis-era5-single-levels",
+        variable=["2m_temperature"],#["maximum_2m_temperature_since_previous_post_processing"],
+        daily_statistic="daily_maximum",
+        time_zone="utc-04:00",
+        frequency="1_hourly",
+        #time=["18"],
     ),
 }
 

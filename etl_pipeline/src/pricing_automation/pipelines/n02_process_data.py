@@ -490,6 +490,7 @@ def _slice_single_geometry(ds_orig, gdf_orig, params_areas):
         gdf_cluster[f'{location_var}_orig'].astype(str) + '-' + 
         gdf_cluster[cluster_var].astype(str).str.rjust(2,"0")
     )
+    gdf_cluster = add_area_column(gdf_cluster)
  
     return gdf_cluster
 
@@ -611,6 +612,7 @@ def process_data_planet(
     cdf_time_window = params.get('cdf_time_window', 45)
     time_smooth_window = params.get('time_smooth_window', 21)
     clim_smooth_window = params.get('climatology_smooth_window', 7)
+    add_neg_anom = params.get('add_neg_anom', True)
 
     # Subset climate area geometry
     LOCATION_NAME = 'location_id'
@@ -696,6 +698,11 @@ def process_data_planet(
     print('Climatology and anomaly successfully added')
 
     df_concat = ds_concat.to_dataframe().reset_index()
+
+    if add_neg_anom:
+        df_concat[f'neg_anom_{variable}'] = np.where(
+            df_concat[f'anom_{variable}'] >=0, 0, df_concat[f'anom_{variable}'] * (-1)
+        ) 
 
     return df_concat, ds_clim
 

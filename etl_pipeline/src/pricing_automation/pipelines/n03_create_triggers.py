@@ -486,7 +486,10 @@ def compute_payout_schedule(df_cum, group_cols, params_contract):
         df = df_cum.copy()
  
     df['_pct100'] = df['percentile'] * 100
-    base_cols     = group_cols + ['window_year', 'index_value', 'percentile', '_pct100']
+    base_cols     = group_cols + [
+        'window_year', 'start_date', 'end_date',
+        'index_value', 'index_desc', 'percentile', '_pct100'
+    ]
     df_base       = df[base_cols].copy()
  
     chunks = []
@@ -600,7 +603,8 @@ def compute_payout_schedule(df_cum, group_cols, params_contract):
     df_payouts = df_payouts.drop(columns=['_pct100'])
  
     non_group = ['crop', 'window_year', 'tail', 'design',
-                 'index_value', 'percentile', 'perc_payout',
+                 'start_date', 'end_date',
+                 'index_value', 'index_desc', 'percentile', 'perc_payout',
                  'pure_premium_pct', 'target_loss_ratio', 're_premium_pct',
                  'deductions', 'gross_premium_pct',
                  'coverage', 'insured_value',
