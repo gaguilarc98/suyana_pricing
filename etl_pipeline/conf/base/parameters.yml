@@ -1,7 +1,9 @@
 # Parameters for already available areas
 _arg:
   country: ${runtime_params:country, ${globals:country}}
+  region: ${runtime_params:region, ${globals:region}}
   lead_id: ${runtime_params:lead_id, 'valles'}
+  loc_id: ${runtime_params:loc_id, 'ID-001'}
   provider: ${runtime_params:provider, ${globals:provider}}
   field: ${runtime_params:field, ${globals:field}}
   start_year: ${runtime_params:start_year, 1996}
@@ -12,6 +14,7 @@ params_s:
   include:
     municipio: ['Mizque', 'Quillacollo', 'Colomi', 'Tarija']
   exclude: {}
+  simplify: true
   override_gdf: false
 
 # Parameters for time slice (ERA5 pipeline)
@@ -72,6 +75,28 @@ create_trigger:
     }
   dist: 'empirical'
 
+params_contract:
+  # Shared pricing defaults (override per crop or tail if needed)
+  target_loss_ratio: 0.74 #0.65
+  deductions: 0.175 #0.10
+  # Uniform fallbacks -- used when not set at crop or tail level
+  coverage: 1 #0.14
+  insured_value: 300 #7_200_000
+  crops: 
+    all: 
+      # Monitors both deficit in lower and excess in upper
+      windows: 
+          1:
+            lower: 
+              # Deficit rainfall: continuous ramp from p10 to p1
+              'design': 'layered' #'continuous'
+              'levels': {20: 0.30, 10: 0.4, 5: 0.5} #[10, 1]
+              # inherits coverage=0.14, insured_value=7_200_000 from top level
+            #upper: 
+            #  design: 'continuous'
+            #  levels: [90, 99]
+
+# Parameters for boostrap analysis
 params_bootstrap:
   n_iterations: 1000
   seed: 42
@@ -80,3 +105,26 @@ params_bootstrap:
 params_quote:
   loading_factor: 1.5
   margin: 0.20
+
+
+# Viz parameters
+params_map:
+  window: 1
+  crop: all
+  tail: lower
+  season_name: Winter season # custom
+  start_year: 2003   # optional
+
+params_series:
+  id_location:   ID-081-00
+  id_name:       ID-081-00
+  window:        1
+  crop:          all
+  tail:          lower
+  season_name:   Winter season
+  start_time:    2003-01-01
+  variable:      ${_arg.field}
+  clim_variable: clim_swc
+  anom_variable: anom_swc
+  cum_variable:  anom_swc
+

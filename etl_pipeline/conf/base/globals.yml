@@ -1,6 +1,6 @@
 data_path: s3://suyana-pricing
-#output_path: s3://suyana-pricing/projects
-country: bolivia
+country: latin_america
+region: valles
 provider: ERA5
 field: swc
 version: ''

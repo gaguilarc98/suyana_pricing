@@ -13,7 +13,7 @@ from typing import List, Optional, Dict, Literal, Union
 from .a01_aoi_period import BoundingBox, get_year_list
 
 MIN_VALID_DAYS = 300
-WORKERS_PER_YEAR = 6
+WORKERS_PER_YEAR = 1
 
 
 #——————————————————————————————————————————————
@@ -94,22 +94,22 @@ def get_url_ucsb(
             raise NotImplementedError(f'{freq} not implemented for origin {origin}')
     elif origin == 'CHIRPS':
         if freq == 'daily':            
-            PRODUCT = f'{PATH}/CHIRPS/v3.0/daily/final/IMERGlate-v07/'
+            PRODUCT = f'{PATH}/CHIRPS/v3.0/daily/final/IMERGlate-v07'
         elif freq == 'monthly':
             PRODUCT = f'{PATH}/CHIRPS/v3.0/monthly/global/tifs'
     elif origin == 'CHIRPS-v2':
         if freq == 'daily':
-            PRODUCT = f'{PATH}/CHIRPS-2.0/whem_daily/tifs/p05/'
+            PRODUCT = f'{PATH}/CHIRPS-2.0/whem_daily/tifs/p05'  # removed trailing /
         else:
             raise NotImplementedError(f'{freq} not implemented for origin {origin}')
     elif origin == 'CHIRPS-v3-ERA5':
         if freq == 'daily':
-            PRODUCT = f'{PATH}/CHIRPS/v3.0/daily/final/rnl/'
+            PRODUCT = f'{PATH}/CHIRPS/v3.0/daily/final/rnl'     # removed trailing /
         elif freq == 'monthly':
-            PRODUCT = f'{PATH}/CHIRPS/v3.0/monthly/global/tifs/'
+            PRODUCT = f'{PATH}/CHIRPS/v3.0/monthly/global/tifs' # removed trailing /
     elif origin == 'CHIRPS-v3-IMERG':
         if freq == 'daily':
-            PRODUCT = f'{PATH}/CHIRPS/v3.0/daily/final/sat/'
+            PRODUCT = f'{PATH}/CHIRPS/v3.0/daily/final/sat'     # removed trailing /
         else:
             raise ValueError(f'{freq} not implemented for origin {origin}')
 
@@ -429,4 +429,200 @@ class ERA5Downloader(DataDownloader):
 
         return dict_data
 
+
+#——————————————————————————————————————————————
+# PLANET DOWNLOADER
+#——————————————————————————————————————————————
+
+
+def get_coordinates_list(gdf):
+    if gdf.geom_type.iloc[0] == 'MultiPolygon':
+        coordinates = [list(pair) for pair in gdf.geometry.iloc[0].geoms[0].exterior.coords]
+    elif gdf.geom_type.iloc[0] == 'Polygon':
+        coordinates = [list(pair) for pair in gdf.geometry.iloc[0].exterior.coords]
+    else:
+        raise ValueError('Method to get exterior coordinates failed for GeoDataFrame')
+    return coordinates
+
+
+def get_params_subscription(
+    params_subscription: dict,
+    gdf: gpd.GeoDataFrame,
+    coordinates = None,
+):
+    """
+    Get a dictionary of parameters to create a consistent subscription
+    Args:
+        - params_subscription : (dict) Dictionary of parameters (idLocation, variable, version, band, start and end date)
+        - gdf : (gpd.GeoDataFrame) DataFrame with boundaries for request. If multiple records, it selects the first one.
+        - coordinates : (list) (Optional) list of longitude and latitude coordinates in pairs [[lon1, lat1], [lon2, lat2], ...]
+    """
+    #idLocation = params_subscription['idLocation']
+    id_column = params_subscription.get('id_column')
+    prefix = params_subscription.get('prefix', None)
+    suffix = params_subscription.get('suffix', None)
+    variable = params_subscription.get('variable', 'SWC').upper()
+    version = params_subscription.get('version', 'V5.0').upper()
+    band = params_subscription.get('band', 'C').upper()
+    start_date = pd.to_datetime(params_subscription['start_date'])
+    end_date = pd.to_datetime(params_subscription['end_date'])
+
+    # Get coordinates from Geometry DataFrame
+    if coordinates is None:
+        coordinates = get_coordinates_list(gdf)
+
+    # Check that starting and ending dates make sense
+    if start_date > end_date:
+        raise ValueError('start_date cannot be posterior to end_date')
+
+    # Assign  or check the validity of version for the selected period
+    start_gap, end_gap = pd.to_datetime("2011-10-04"), pd.to_datetime("2012-07-24")
+    # Assign the right instrument according to the starting date
+    if start_date < start_gap:
+        instrument = 'AMSRE'
+    elif start_date > end_gap:
+        instrument = 'AMSR2'
+
+    resolution = '1000'
+    if variable == 'SWC':   
+        if version == 'V5.0':
+            if (
+                (start_date >= start_gap and start_date <= end_gap) or 
+                (end_date >= start_gap and end_date <= end_gap)
+            ):
+                raise ValueError('No support from 2011-10-04 to 2012-07-25')
+        if version == "V2.0":
+            if start_date < pd.to_datetime('2017-07-01'):
+                raise ValueError("SWC V2 is only available from July 1st 2017 onwards.")
+            resolution = '100'
+        sensor = f'{instrument}-{band}'
+    elif variable == "LST":
+        version = "V1.0"
+        sensor = instrument
+    else:
+        raise ValueError("Invalid Planetary Variable.")  
+    
+    location_name = [v for v in [prefix, str(gdf[id_column].iloc[0]), suffix] if v]
+    id_location = '_'.join(location_name).replace(' ','')
+
+    dict_params = {
+        'id_location': id_location,
+        'variable': variable,
+        'sensor': sensor,
+        'version': version,
+        'resolution': resolution,
+        'start_date': start_date,
+        'end_date': end_date,
+        'coordinates': coordinates,
+    }
+
+    return dict_params
+
+
+def create_subscription(
+    dict_params,
+    credentials
+):
+    variable = dict_params['variable'].upper()
+    sensor = dict_params['sensor']
+    version = dict_params['version']
+    resolution = dict_params['resolution']
+    start_date = pd.to_datetime(dict_params['start_date'])
+    end_date = pd.to_datetime(dict_params['end_date'])
+    coordinates = dict_params['coordinates']
+    id_location = dict_params['id_location']
+
+    # Get credentials for posting a request and dumping data
+    PLANET_API_KEY = credentials['PLANET_API_KEY']
+    S3_BUCKET = credentials['S3_BUCKET']
+    AWS_REGION = credentials['AWS_REGION']
+    AWS_ACCESS_KEY_ID = credentials['AWS_ACCESS_KEY_ID']
+    AWS_SECRET_ACCESS_KEY = credentials['AWS_SECRET_ACCESS_KEY']
+    BASE_URL = "https://api.planet.com/subscriptions/v1?dry_run=true"
+    # Setup Authentication
+    auth = requests.auth.HTTPBasicAuth(PLANET_API_KEY, "")
+
+    # Setting up subscription parameters
+    pv_id = f"{variable}-{sensor}_{version}_{resolution}"
+
+    bucket_folder = f'{variable}_{id_location}'
+
+    subscription_name = f"{bucket_folder} {pv_id} {start_date} {end_date}"
+
+    if variable == "SWC":
+        source_type = "soil_water_content"
+    elif variable == "LST":
+        source_type = "land_surface_temperature"
+    else:
+        raise ValueError(f"There is no support for product {variable}")
+    
+    # Area of Access
+    AOI = {"type": "Polygon", "coordinates": [coordinates]}
+
+    # Create a new subscription JSON object
+    subscription_desc = {
+        "name": subscription_name,
+        "source": {
+            "type": source_type,
+            "parameters": {
+                "id": pv_id,
+                "start_time": start_date.strftime('%Y-%m-%dT%H:%M:%SZ'),
+                "end_time": (end_date + pd.offsets.Day(1)).strftime('%Y-%m-%dT%H:%M:%SZ'),
+                "geometry": AOI,
+            },
+        },
+        "delivery": {
+            "type": "amazon_s3",
+            "parameters": {
+                "bucket": S3_BUCKET,
+                "aws_region": AWS_REGION,
+                "aws_access_key_id": AWS_ACCESS_KEY_ID,
+                "aws_secret_access_key": AWS_SECRET_ACCESS_KEY,
+                "path_prefix": bucket_folder,
+            },
+        },
+    }
+
+    # Create a subscription
+    headers = {"content-type": "application/json"}
+    print(credentials)
+    response = requests.post(
+        BASE_URL, data=json.dumps(subscription_desc), auth=auth, headers=headers
+    )
+    if not response.ok:
+        print("Received error code when trying to create subscription", response)
+        print(response.json())
+        return
+
+    dict_subscription = {
+        'idLocation': id_location,
+        'key': response.json()["id"],
+        'variable': variable,
+        'sensor': sensor,
+        'version': version,
+        'resolution': resolution,
+        'startDate': start_date,
+        'endDate': end_date
+    }
+    return dict_subscription
+
+
+def get_status(
+    sub_id, credentials
+):
+    BASE_URL = "https://api.planet.com/subscriptions/v1"
+    PLANET_API_KEY = credentials['PLANET_API_KEY']
+    sub_url = BASE_URL + "/" + sub_id
+    auth = requests.auth.HTTPBasicAuth(PLANET_API_KEY, "")
+    response = requests.get(sub_url, auth=auth)
+    try:
+        if not response.ok:
+            print(response)
+            raise Exception("There was an error in the request")
+        response_json = response.json()
+        sub_status = response_json["status"]
+        return sub_status
+    except:
+        return 'unsent'
+    
 

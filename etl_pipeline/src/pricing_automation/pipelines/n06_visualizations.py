@@ -23,7 +23,6 @@ import xarray as xr
 import contextily as ctx
 from scipy import stats
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # helpers
 # ─────────────────────────────────────────────────────────────────────────────
@@ -218,9 +217,8 @@ def plot_trend_map(
 # ─────────────────────────────────────────────────────────────────────────────
 
 def plot_trigger_frequency_map(
-    df_triggers: pd.DataFrame,
+    df_payouts: pd.DataFrame,
     gdf_aoi: gpd.GeoDataFrame,
-    params_trigger: dict,
 ) -> plt.Figure:
     """
     Choropleth map showing the fraction of years each location activated
@@ -236,21 +234,23 @@ def plot_trigger_frequency_map(
     ------
     matplotlib Figure
     """
-    # Detect activation columns (P90_activated, P95_activated, etc.)
-    act_cols = [c for c in df_triggers.columns if c.endswith("_activated")]
-    if not act_cols:
-        raise ValueError("df_triggers has no '*_activated' columns.")
-
-    # A location-year is "activated" if ANY layer triggered
-    df = df_triggers.copy()
-    df["any_activated"] = df[act_cols].max(axis=1)
-
+    # Detect activation by computing payouts above zero
+    df = df_payouts.copy()
+    df['any_activated'] = (df['perc_payout'] > 0).astype(int)
+ 
+    # Max per (location, year): 1 if any row activated that year
+    df = (
+        df.groupby(['location_id', 'window_year'])['any_activated']
+        .max()
+        .reset_index()
+    )
+ 
     # Fraction of years with at least one activation per location
     freq = (
-        df.groupby("location_id")["any_activated"]
+        df.groupby('location_id')['any_activated']
         .mean()
         .reset_index()
-        .rename(columns={"any_activated": "trigger_freq"})
+        .rename(columns={'any_activated': 'trigger_freq'})
     )
 
     gdf_plot = gdf_aoi.merge(freq, on="location_id", how="left")
@@ -364,6 +364,306 @@ def plot_anomaly_timeseries(
     ax.set_xlim(x.min() - 0.5, x.max() + 0.5)
     ax.xaxis.set_major_locator(mticker.MultipleLocator(5))
     ax.xaxis.set_minor_locator(mticker.MultipleLocator(1))
+    plt.tight_layout()
+    plt.close(fig)
+    return fig
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 5. Activation map with payout fraction
+# ─────────────────────────────────────────────────────────────────────────────
+
+def create_activation_map(
+    df_payouts: pd.DataFrame,
+    gdf: gpd.GeoDataFrame,
+    params_map: dict,
+    params_s: dict = {},
+):
+    """
+    Plot activation map showing perc_payout intensity per location per year.
+    Zero payout -> midnightblue. Non-zero -> green-to-red gradient by intensity.
+ 
+    params_map keys: window, crop, tail, season_name,
+                     start_year (optional), location_var (optional).
+    """
+    window      = params_map['window']
+    crop        = params_map['crop']
+    tail        = params_map['tail']
+    season_name = params_map['season_name']
+    location_var = params_s.get('location_var', 'location_id')
+ 
+    gdf = subset_geometry(gdf, params_s)
+    gdf = gdf.to_crs(epsg='4326')
+ 
+    df = df_payouts[
+        (df_payouts['window'] == window) &
+        (df_payouts['crop']   == crop)   &
+        (df_payouts['tail']   == tail)
+    ].copy()
+ 
+    if 'start_year' in params_map:
+        df = df[df['window_year'] >= params_map['start_year']].copy()
+ 
+    df['window_year'] = df['window_year'].astype(int)
+ 
+    # Max perc_payout per (location, year) in case of duplicates
+    df = (
+        df.groupby([location_var, 'window_year'])['perc_payout']
+        .max()
+        .reset_index()
+    )
+ 
+    gdf_season = gdf.merge(df, how='inner', on=location_var)
+ 
+    # Colormap: midnightblue for zero, green->red for non-zero
+    cmap_grad = LinearSegmentedColormap.from_list('payout', ['darkgreen', 'gold', 'crimson'])
+    vmax      = df['perc_payout'].max()
+ 
+    def plot_year(ax_i, gdf_year):
+        """Plot a single year, splitting zero and non-zero payout polygons."""
+        gdf_zero    = gdf_year[gdf_year['perc_payout'] == 0]
+        gdf_nonzero = gdf_year[gdf_year['perc_payout']  > 0]
+        gdf_na      = gdf_year[gdf_year['perc_payout'].isna()]
+ 
+        if not gdf_zero.empty:
+            gdf_zero.plot(ax=ax_i, color='midnightblue',
+                          edgecolor='black', linewidth=0.2, alpha=0.7)
+        if not gdf_nonzero.empty:
+            gdf_nonzero.plot(column='perc_payout', ax=ax_i, cmap=cmap_grad,
+                             vmin=0, vmax=vmax,
+                             edgecolor='black', linewidth=0.2, alpha=0.7)
+        if not gdf_na.empty:
+            gdf_na.plot(ax=ax_i, color='lightgrey',
+                        edgecolor='black', linewidth=0.2, alpha=0.5)
+ 
+    list_years = sorted(gdf_season['window_year'].dropna().unique().astype(int))
+    n_years    = len(list_years)
+ 
+    if n_years <= 15:
+        fig, ax = plt.subplots(3, 5, figsize=(18, 14.5))
+        years = np.arange(min(list_years), min(list_years) + 15, 1)
+    elif n_years <= 20:
+        fig, ax = plt.subplots(4, 5, figsize=(24, 14.5))
+        years = np.arange(min(list_years), min(list_years) + 20, 1)
+    elif n_years <= 25:
+        fig, ax = plt.subplots(5, 5, figsize=(24, 14.5))
+        years = np.arange(min(list_years), min(list_years) + 25, 1)
+    else:
+        fig, ax = plt.subplots(5, 6, figsize=(24, 14.5))
+        years = np.arange(max(list_years) - 29, max(list_years) + 1, 1)
+ 
+    ax = ax.flatten()
+ 
+    for i, year in enumerate(years):
+        gdf_year = gdf_season[gdf_season['window_year'] == year]
+        if gdf_year.empty:
+            ax[i].axis('off')
+            continue
+ 
+        plot_year(ax[i], gdf_year)
+ 
+        ax[i].set_aspect('auto')# 'equal', 'auto'
+        ax[i].xaxis.set_major_formatter(FuncFormatter(format_longitude))
+        ax[i].yaxis.set_major_formatter(FuncFormatter(format_latitude))
+        ax[i].tick_params(axis='x', labelcolor='gray', labelsize=7, rotation=0)
+        ax[i].tick_params(axis='y', labelcolor='gray', labelsize=7)
+        ax[i].set_title(str(year), size=10)
+ 
+    # Shared colorbar for non-zero payout gradient
+    sm = cm.ScalarMappable(cmap=cmap_grad, norm=mcolors.Normalize(vmin=0, vmax=vmax))
+    sm.set_array([])
+    cbar = fig.colorbar(sm, ax=ax, orientation='vertical', #fraction=0.02, 
+                        pad=0.02, shrink=0.6)
+    cbar.set_label('Payout fraction', size=10)
+ 
+    plt.suptitle(
+        f"Activation map -- {season_name} | window {window} | {crop} | {tail} tail",
+        fontsize=14, y=0.94
+    )
+    #plt.tight_layout()
+    plt.close(fig)
+
+    return fig
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 6. Plot time series of index
+# ─────────────────────────────────────────────────────────────────────────────
+
+def cumulate_over_window(df_orig, variable, window, time_dim='time'):
+    """Cumulate variable daily within a seasonal window. Returns df with
+    cum_{variable} column, season and season_year for filtering."""
+    df           = df_orig.copy()
+    df[time_dim] = pd.to_datetime(df[time_dim])
+    month_day    = df[time_dim].dt.strftime('%m-%d')
+
+    start_md, end_md = window[0], window[1]
+    start_month, start_day = map(int, start_md.split('-'))
+    end_month,   end_day   = map(int, end_md.split('-'))
+    crosses_year = (end_month < start_month) or (
+        end_month == start_month and end_day < start_day
+    )
+
+    if crosses_year:
+        df['in_window']      = np.where(
+            (month_day >= start_md) | (month_day <= end_md), 1, np.nan
+        )
+        df['window_year'] = np.where(
+            month_day <= end_md,
+            df[time_dim].dt.year - 1,
+            df[time_dim].dt.year
+        )
+    else:
+        df['in_window']      = np.where(
+            (month_day >= start_md) & (month_day <= end_md), 1, np.nan
+        )
+        df['window_year'] = df[time_dim].dt.year
+
+    df[f'cum_{variable}'] = (
+        df.groupby(['window_year', 'in_window'])[variable]
+        .cumsum()
+        .fillna(0)
+    )
+    return df
+
+
+def plot_activation_history(
+    df_swc: pd.DataFrame,
+    df_payouts: pd.DataFrame,
+    params_plot: dict,
+    params_trigger: dict,
+    params_s: dict = {},
+):
+    """
+    Two-panel plot: climatology/anomaly time series (top) and
+    daily cumulated index with payout bars per window-year (bottom).
+
+    params_plot keys: id_area, id_name, window, crop, tail,
+                      season_name, start_time, variable,
+                      clim_variable, anom_variable.
+    """
+    # ---- unpack params -------------------------------------------------------
+    id_location       = params_plot['id_location']
+    id_name       = params_plot['id_name']
+    window_key    = params_plot['window']
+    crop          = params_plot['crop']
+    tail          = params_plot['tail']
+    season_name   = params_plot['season_name']
+    start_time    = pd.to_datetime(params_plot['start_time'])
+    variable      = params_plot['variable']
+    cum_variable  = params_plot['cum_variable']
+    clim_var      = params_plot['clim_variable']
+    anom_var      = params_plot['anom_variable']
+    location_var  = params_s.get('location_var', 'location_id')
+
+    lapse = params_trigger['windows'][window_key]
+
+    # ---- filter df_swc -------------------------------------------------------
+    df_swc = df_swc[df_swc[location_var] == id_location].copy()
+    df_swc['time'] = pd.to_datetime(df_swc['time'])
+    df_swc = df_swc[df_swc['time'] >= start_time].copy()
+
+    # ---- daily cumulation within window -------------------------------------
+    # Keep all rows so zeros outside the window produce the saw-tooth shape.
+    # Filtering to in_window only would cause slanted lines between windows.
+    df_cum = cumulate_over_window(df_swc, cum_variable, lapse)
+
+    # ---- filter df_payouts ---------------------------------------------------
+    df_pay = df_payouts[
+        (df_payouts[location_var] == id_location) &
+        (df_payouts['window']     == window_key) &
+        (df_payouts['crop']       == crop) &
+        (df_payouts['tail']       == tail)
+    ].copy()
+    df_pay['window_year'] = df_pay['window_year'].astype(int)
+
+    # Max perc_payout per window_year (collapse duplicates)
+    df_bars = (
+        df_pay.groupby('window_year')['perc_payout']
+        .max()
+        .reset_index()
+    )
+
+    # Bar positions and widths from window lapse
+    start_month, start_day = map(int, lapse[0].split('-'))
+    end_month,   end_day   = map(int, lapse[1].split('-'))
+    crosses_year = (end_month < start_month) or (
+        end_month == start_month and end_day < start_day
+    )
+    bar_positions = pd.to_datetime(
+        df_bars['window_year'].astype(str) + '-' + lapse[0]
+    )
+    end_year = df_bars['window_year'] + crosses_year
+    bar_ends = pd.to_datetime(end_year.astype(str) + '-' + lapse[1])
+    bar_widths = (bar_ends - bar_positions).dt.days
+
+    # ---- colormap for bars ---------------------------------------------------
+    cmap_bars = LinearSegmentedColormap.from_list(
+        'payout', ['darkgreen', 'gold', 'crimson']
+    )
+    vmax = df_bars['perc_payout'].max() if df_bars['perc_payout'].max() > 0 else 1
+    norm = mcolors.Normalize(vmin=0, vmax=vmax)
+    bar_colors = [
+        cmap_bars(norm(v)) if v > 0 else mcolors.to_rgba('midnightblue')
+        for v in df_bars['perc_payout']
+    ]
+
+    # ---- build figure --------------------------------------------------------
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 7))
+
+    # -- top panel: climatology and anomaly ------------------------------------
+    ax1.plot(df_swc['time'], df_swc[clim_var], lw=1,
+             color='darkgreen', label=f'Climatology ({clim_var})')
+
+    mask_below = df_swc[clim_var] > df_swc[variable]
+    mask_above = df_swc[clim_var] <= df_swc[variable]
+    ax1.fill_between(df_swc['time'], df_swc[clim_var], df_swc[variable],
+                     where=mask_below, interpolate=True,
+                     color='darkred', alpha=0.4, label='Below climatology')
+    ax1.fill_between(df_swc['time'], df_swc[variable], df_swc[clim_var],
+                     where=mask_above, interpolate=True,
+                     color='midnightblue', alpha=0.4, label='Above climatology')
+
+    # Shade window periods
+    for yr in df_bars['window_year']:
+        start = pd.to_datetime(f'{yr}-{lapse[0]}')
+        end   = pd.to_datetime(f'{int(yr) + crosses_year}-{lapse[1]}')
+        ax1.axvspan(start, end, color='orange', alpha=0.15)
+
+    ax1.set_title('a) Climatology and Anomalies', loc='left', fontsize=10)
+    ax1.set_ylabel(variable)
+    ax1.legend(loc='upper right', fontsize=8)
+
+    # -- bottom panel: daily cumulation + payout bars -------------------------
+    ax2.plot(df_cum['time'], df_cum[f'cum_{cum_variable}'], lw=1,
+             color='dimgray', label=f'Cumulated {cum_variable} (in-window)')
+    ax2.set_title(
+        f'b) Trigger activation history -- {season_name}', loc='left', fontsize=10
+    )
+    ax2.set_ylabel(f'Cumulated {cum_variable}')
+
+    ax2y = ax2.twinx()
+    for pos, width, color, val in zip(
+        bar_positions, bar_widths, bar_colors, df_bars['perc_payout']
+    ):
+        ax2y.bar(
+            pos, height=val, width=width,
+            align='edge', alpha=0.45, color=color
+        )
+
+    ax2y.set_ylim(0, vmax * 1.1)
+    ax2y.set_ylabel('Payout fraction', fontsize=9)
+
+    ax2.legend(loc='upper left', fontsize=8)
+
+    # Align x-axis limits across both panels
+    xlim = ax1.get_xlim()
+    ax2.set_xlim(xlim)
+
+    plt.suptitle(
+        f'{id_name} | {season_name} | window {window_key} | {crop} | {tail} tail',
+        fontsize=12, y=0.98
+    )
     plt.tight_layout()
     plt.close(fig)
     return fig

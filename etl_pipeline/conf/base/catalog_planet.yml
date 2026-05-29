@@ -1,0 +1,52 @@
+# Here you can define all your datasets by using simple YAML syntax.
+#
+# Documentation for this file format can be found in "The Data Catalog"
+# Link: https://docs.kedro.org/en/stable/catalog-data/introduction/#data-catalog
+# Here you can define all your datasets by using simple YAML syntax.
+
+# Arguments
+# Use snake_case style for uniformity e.g. costa_rica, 'swiss_re', 'bisa_seguros'
+_arg:
+  country: ${runtime_params:country, ${globals:country}}
+  region: ${runtime_params:region, ${globals:region}}
+  lead_id: ${runtime_params:lead_id, 'test1'}
+  loc_id: ${runtime_params:loc_id, 'ID-001'}
+  provider: ${runtime_params:provider, ${globals:provider}}
+  field: ${runtime_params:field, ${globals:field}}
+  version: ${runtime_params:version, ${globals:version}}
+
+# Request data
+dt_planet_catalog:
+  type: pricing_automation.datasets_registry.DeltaLakeDataset
+  filepath: ${globals:data_path}/metadata/planet_request_log
+  save_args:
+    mode: append
+
+# Climate areas data
+gdf_climate_areas:
+  type: geopandas.GenericDataset
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/geometries/climate_areas_geometries.parquet 
+  file_format: parquet
+  save_args:
+    compression: GZIP
+
+#  Request data from Planet
+ds_request_1:
+  type: pricing_automation.datasets_registry.XarrayZarrDataset
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/sources/PLANET_AMSRE_${_arg.field}_${_arg.loc_id}.zarr
+  save_args:
+    consolidated: true
+    mode: w
+    append_dim: location_id
+  load_args:
+    consolidated: true
+
+ds_request_2:
+  type: pricing_automation.datasets_registry.XarrayZarrDataset
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/sources/PLANET_AMSR2_${_arg.field}_${_arg.loc_id}.zarr
+  save_args:
+    consolidated: true
+    mode: w
+    append_dim: location_id
+  load_args:
+    consolidated: true

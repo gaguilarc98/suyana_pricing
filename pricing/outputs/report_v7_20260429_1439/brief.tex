@@ -1,0 +1,282 @@
+\documentclass[10pt,a4paper]{article}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[spanish]{babel}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage[a4paper,margin=1.15cm,top=0.8cm,bottom=0.9cm]{geometry}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{tikz}
+\usepackage{booktabs}
+\usepackage{parskip}
+\usetikzlibrary{positioning}
+
+\definecolor{sgreen}{HTML}{43A047}
+\definecolor{sdarkgreen}{HTML}{2E7D32}
+\definecolor{sblack}{HTML}{141414}
+\definecolor{sdark}{HTML}{111111}
+\definecolor{sgray}{HTML}{555555}
+\definecolor{smidgray}{HTML}{9E9E9E}
+\definecolor{slightgray}{HTML}{F2F2F2}
+
+\graphicspath{{figures/}{brand/}}
+
+\pagestyle{empty}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0pt}
+
+% ---------------------------------------------------------------------------
+% Suyana brief macros — match the dashboard-style product-sheet layout.
+% ---------------------------------------------------------------------------
+
+% Dark header band: brand wordmark + product title + subtitle line.
+\newcommand{\suyanaheader}[2]{%
+  \noindent\begin{tikzpicture}[baseline=(current bounding box.north)]
+    \node[fill=sdark, rounded corners=10pt, minimum width=\textwidth,
+          inner xsep=18pt, inner ysep=11pt, anchor=north west] (h) at (0,0) {%
+      \parbox{\dimexpr\textwidth-40pt}{%
+        \color{white}%
+        {\huge\textbf{Suyana}}\hfill{\Large\textbf{#1}}\\[3pt]%
+        {\color{smidgray}\small\textsc{Hoja de producto}}\hfill{\color{smidgray}\small #2}%
+      }%
+    };
+  \end{tikzpicture}\par
+}
+
+% A single stat pill — green uppercase label + white value. Used inside \suyanastats.
+\newcommand{\statpill}[2]{%
+  {\color{sgreen}\scriptsize\textbf{\MakeUppercase{#1}}}\\[3pt]%
+  {\color{white}\normalsize #2}%
+}
+
+% Stats strip: 6 pills inside a continuation of the dark band.
+\newcommand{\suyanastats}[6]{%
+  \par\vspace{5pt}\noindent\begin{tikzpicture}[baseline=(current bounding box.north)]
+    \node[fill=sdark, rounded corners=10pt, minimum width=\textwidth,
+          inner xsep=12pt, inner ysep=8pt, anchor=north west] {%
+      \parbox{\dimexpr\textwidth-28pt}{%
+        \begin{minipage}[t]{0.16\linewidth}\centering #1\end{minipage}\hfill
+        \begin{minipage}[t]{0.16\linewidth}\centering #2\end{minipage}\hfill
+        \begin{minipage}[t]{0.16\linewidth}\centering #3\end{minipage}\hfill
+        \begin{minipage}[t]{0.16\linewidth}\centering #4\end{minipage}\hfill
+        \begin{minipage}[t]{0.16\linewidth}\centering #5\end{minipage}\hfill
+        \begin{minipage}[t]{0.16\linewidth}\centering #6\end{minipage}%
+      }%
+    };
+  \end{tikzpicture}\par\vspace{6pt}
+}
+
+% Big-number tile for a headline figure (AAL, prima, etc.). Use in a row.
+\newcommand{\bignumtile}[2]{%
+  \begin{tikzpicture}[baseline=(current bounding box.north)]
+    \node[fill=white, draw=slightgray, line width=0.8pt, rounded corners=8pt,
+          inner xsep=10pt, inner ysep=8pt, text width=\linewidth-22pt,
+          minimum height=48pt, anchor=north west, align=center] {%
+      {\fontsize{19}{22}\selectfont\bfseries\color{sgreen} #1}\\[2pt]%
+      {\scriptsize\color{sgray} #2}%
+    };
+  \end{tikzpicture}%
+}
+
+% Content panel: green uppercase title + slightgray rounded body.
+\newcommand{\suyanapanel}[2]{%
+  \begin{tikzpicture}[baseline=(current bounding box.north)]
+    \node[fill=slightgray, rounded corners=8pt,
+          inner xsep=9pt, inner ysep=7pt, text width=\linewidth-20pt,
+          anchor=north west, align=left] {%
+      {\color{sgreen}\bfseries\scriptsize\MakeUppercase{#1}}\\[3pt]%
+      {\color{sblack}\footnotesize #2}%
+    };
+  \end{tikzpicture}%
+}
+
+% Fixed-height plot block. Keeps column bottoms aligned even when captions vary.
+\newcommand{\briefplot}[2]{%
+  \begin{center}
+    \includegraphics[width=\linewidth,height=0.115\textheight,keepaspectratio]{#1}%
+  \end{center}
+  \vspace{-4pt}%
+  {\scriptsize\color{sgray}#2\par}%
+}
+
+% Numbered FAQ item — green circle with the number, then a content panel.
+\newcommand{\faqitem}[3]{%
+  \noindent\begin{minipage}{\linewidth}
+    \tikz[baseline=(n.base)]\node[circle, fill=sgreen, text=white,
+      font=\bfseries\scriptsize, minimum size=15pt, inner sep=0pt] (n) {#1};%
+    \hspace{5pt}%
+    \parbox[t]{\dimexpr\linewidth-28pt\relax}{\bfseries\scriptsize #2}%
+    \par\vspace{2pt}%
+    \begin{tikzpicture}[baseline=(current bounding box.north)]
+      \node[fill=slightgray, rounded corners=8pt,
+          inner xsep=7pt, inner ysep=5pt, text width=\linewidth-16pt,
+          anchor=north west] {%
+        {\color{sblack}\scriptsize #3}%
+      };
+    \end{tikzpicture}%
+  \end{minipage}%
+}
+
+% Bottom call-to-action strip: green band, centered headline + contact.
+\newcommand{\suyanacta}[2]{%
+  \noindent\begin{tikzpicture}[baseline=(current bounding box.north)]
+    \node[fill=sgreen, text=white, rounded corners=10pt,
+          inner xsep=18pt, inner ysep=10pt,
+          minimum width=\textwidth, anchor=north west] {%
+      \parbox{\dimexpr\textwidth-40pt}{%
+        \centering\bfseries\large #1\\[3pt]%
+        \normalfont\small #2%
+      }%
+    };
+  \end{tikzpicture}\par
+}
+
+% Footer disclaimer — small, gray, centered.
+\newcommand{\suyanafooter}[1]{%
+  \par\vspace{4pt}{\centering\color{smidgray}\tiny #1\par}%
+}
+
+\begin{document}
+% ─────────────────────────────────────────────────────────────────────────────
+% PÁGINA 1 — PRODUCTO Y MECÁNICA
+% ─────────────────────────────────────────────────────────────────────────────
+
+\suyanaheader{Producto Paramétrico de Sequía}{Argentina · Marzo 2026}
+
+\suyanastats
+  {\statpill{Región}{Sur · Norte}}
+  {\statpill{Cultivo}{Trigo}}
+  {\statpill{Ventana}{15 Sep – 14 Nov}}
+  {\statpill{Notional}{USD 1,2M}}
+  {\statpill{Climatología}{1996–2025}}
+  {\statpill{Tipo}{Paramétrico}}
+
+\vspace{5pt}
+
+\begin{minipage}[t]{0.32\textwidth}
+  \bignumtile{USD 0,10M}{Pérdida media anual histórica}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.32\textwidth}
+  \bignumtile{USD 0,52M}{Prima anual técnica}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.32\textwidth}
+  \bignumtile{USD 1,20M}{Pago máximo posible}
+\end{minipage}
+
+\par\vspace{5pt}
+
+\begin{minipage}[t]{0.48\textwidth}
+
+  \suyanapanel{Qué cubre este producto}{%
+    Este seguro te protege cuando la sequía afecta el suelo durante la
+    ventana crítica del trigo. Si el índice supera el umbral, recibís el
+    pago automáticamente, sin peritaje ni espera.%
+  }
+
+  \par\vspace{6pt}
+
+  \suyanapanel{Cuándo se activa el pago}{%
+    El producto monitorea la humedad del suelo cada día de la temporada.
+    Hay tres niveles de activación: sequía severa, sequía muy severa y
+    sequía catastrófica. A mayor intensidad, mayor el pago que recibís.%
+  }
+
+  \par\vspace{6pt}
+
+  \briefplot{loss_trends.png}{Pérdidas anuales históricas entre 1996 y 2025. Los años 2004 y 2009 concentraron los eventos más severos.}
+
+\end{minipage}\hfill
+\begin{minipage}[t]{0.48\textwidth}
+
+  \suyanapanel{Estructura de pagos}{%
+    \renewcommand{\arraystretch}{1.3}
+    \scriptsize\setlength{\tabcolsep}{3pt}%
+    \begin{tabular}{@{}lrr@{}}
+      \toprule
+      \textbf{Nivel de sequía} & \textbf{\% del máximo} & \textbf{Pago (USD)} \\
+      \midrule
+      Severa        & 20\% & 240.000 \\
+      Muy severa    & 40\% & 480.000 \\
+      Catastrófica  & 100\% & 1.200.000 \\
+      \bottomrule
+    \end{tabular}
+    \par\vspace{4pt}
+    {\scriptsize\color{sgray}
+      Los montos corresponden al notional total del contrato.
+      Cada hectárea cubierta recibe su parte proporcional.\par
+    }%
+  }
+
+  \par\vspace{6pt}
+
+  \suyanapanel{Ejemplo concreto}{%
+    En 2009, el índice de humedad del suelo cayó al nivel catastrófico
+    durante la ventana del trigo. El pago generado fue de USD~1.200.000,
+    acreditado en forma automática al finalizar la temporada.%
+  }
+
+  \par\vspace{6pt}
+
+  \briefplot{aep_portfolio.png}{Frecuencia histórica de pérdidas anuales del portafolio. La línea vertical marca el promedio.}
+
+\end{minipage}
+
+\par\vspace{6pt}
+{\color{sgreen}\bfseries\scriptsize PREGUNTAS FRECUENTES}\par\vspace{3pt}
+
+\begin{minipage}[t]{0.48\textwidth}
+
+  \faqitem{1}{¿Qué es un seguro paramétrico?}{%
+    Un seguro que paga automáticamente cuando un índice medible supera un
+    umbral acordado en el contrato.%
+  }
+
+  \vspace{3pt}
+
+  \faqitem{2}{¿Cómo medimos la sequía?}{%
+    Usamos datos satelitales de humedad del suelo provistos por ERA5, calibrados
+    con 30 años de historia climática local.%
+  }
+
+  \vspace{3pt}
+
+  \faqitem{3}{¿Cómo se calcula el pago?}{%
+    Si la humedad cae bajo el umbral histórico, el monto se determina
+    automáticamente según el nivel de sequía alcanzado.%
+  }
+
+\end{minipage}\hfill
+\begin{minipage}[t]{0.48\textwidth}
+
+  \faqitem{4}{¿De dónde vienen los datos?}{%
+    El índice usa ERA5 para humedad del suelo y controles climáticos históricos
+    del pipeline de Suyana.%
+  }
+
+  \vspace{3pt}
+
+  \faqitem{5}{¿Cuándo recibo el dinero?}{%
+    El pago se procesa automáticamente al cerrar la temporada, sin necesidad
+    de presentar reclamos ni documentación adicional.%
+  }
+
+  \vspace{3pt}
+
+  \faqitem{6}{¿Qué cubre exactamente?}{%
+    Cubre la sequía durante la ventana del trigo, del 15 de septiembre al
+    14 de noviembre, en las regiones Sur y Norte contratadas.%
+  }
+
+\end{minipage}
+
+\vfill
+
+\suyanacta{¿Querés una cotización?}{Contactá a nuestro equipo en suyana.io}
+
+\suyanafooter{Este material fue preparado por Suyana y es información
+confidencial. La información presentada no constituye una oferta de
+seguro ni asesoramiento. Toda cobertura paramétrica conlleva el
+riesgo de que el índice gatillo no esté perfectamente correlacionado
+con la pérdida subyacente.}
+\end{document}

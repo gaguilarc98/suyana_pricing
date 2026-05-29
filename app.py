@@ -61,29 +61,31 @@ def get_aws_env(key: str = "", secret: str = "", token: str = "") -> dict:
 
 LOCAL_DATA_PATH = Path.home() / "suyana_data"
 
-def s3_outputs(country: str, lead_id: str = "valles") -> dict:
+def s3_outputs(country: str, region: str, lead_id: str) -> dict:
     """Return a dict of label → S3 path for all pipeline outputs."""
-    base = f"s3://suyana-pricing/{country}/{lead_id}"
+    base = f"s3://suyana-pricing/{country}/{region}/outputs/{lead_id}"
+    disp = f"s3://suyana-pricing/{country}/{region}/displays/{lead_id}"
     return {
-        "pricing":    f"{base}/outputs/pricing_quote.parquet",
-        "triggers":   f"{base}/outputs/ERA5_swc_window_triggers.parquet",
-        "aep":        f"{base}/displays/aep_portfolio.png",
-        "aep_crop":   f"{base}/displays/aep_per_crop.png",
-        "trigger_map":f"{base}/displays/trigger_frequency_map.png",
-        "anomaly":    f"{base}/displays/anomaly_timeseries.png",
+        "pricing":    f"{base}/pricing_quote.parquet",
+        "triggers":   f"{base}/ERA5_swc_window_triggers.parquet",
+        "aep":        f"{disp}/aep_portfolio.png",
+        "aep_crop":   f"{disp}/aep_per_crop.png",
+        "trigger_map":f"{disp}/trigger_frequency_map.png",
+        "anomaly":    f"{disp}/anomaly_timeseries.png",
     }
 
 
-def local_outputs(country: str, lead_id: str) -> dict:
+def local_outputs(country: str, region: str, lead_id: str) -> dict:
     """Return a dict of label → local Path for all pipeline outputs."""
-    base = LOCAL_DATA_PATH / country / lead_id
+    base = LOCAL_DATA_PATH / country / region / "outputs" / lead_id
+    disp = LOCAL_DATA_PATH / country / region / "displays" / lead_id
     return {
-        "pricing":    base / "outputs" / "pricing_quote.parquet",
-        "triggers":   base / "outputs" / "ERA5_swc_window_triggers.parquet",
-        "aep":        base / "displays" / "aep_portfolio.png",
-        "aep_crop":   base / "displays" / "aep_per_crop.png",
-        "trigger_map":base / "displays" / "trigger_frequency_map.png",
-        "anomaly":    base / "displays" / "anomaly_timeseries.png",
+        "pricing":    base / "pricing_quote.parquet",
+        "triggers":   base / "ERA5_swc_window_triggers.parquet",
+        "aep":        disp / "aep_portfolio.png",
+        "aep_crop":   disp / "aep_per_crop.png",
+        "trigger_map":disp / "trigger_frequency_map.png",
+        "anomaly":    disp / "anomaly_timeseries.png",
     }
 
 
@@ -118,7 +120,7 @@ def write_params(pipeline: str, country: str, locations: list[str],
                  date_start: str, date_end: str,
                  variable: str = "swc", provider: str = "ERA5",
                  trigger_side: str = "lower", lead_id: str = "valles",
-                 use_local: bool = False):
+                 region: str = "valles", use_local: bool = False):
     """Overwrite globals.yml and relevant sections of parameters.yml for the run."""
     if use_local:
         data_path = str(LOCAL_DATA_PATH)
@@ -130,6 +132,7 @@ def write_params(pipeline: str, country: str, locations: list[str],
     globals_path.write_text(
         f"data_path: {data_path}\n"
         f"country: {country}\n"
+        f"region: {region}\n"
         f"provider: {provider}\n"
         f"field: {variable}\n"
         f"version: ''\n"
@@ -455,18 +458,20 @@ class App(tk.Tk):
 
         # Update config files
         use_local = self.data_loc_var.get() == "Local"
+        lead_id_val = self.lead_id_var.get().strip() or "valles"
         write_params(pipeline, country, selected,
                      self.date_start.get(), self.date_end.get(),
                      variable=self.variable_var.get(),
                      provider=self.provider_var.get(),
                      trigger_side=side,
-                     lead_id=self.lead_id_var.get(),
+                     lead_id=lead_id_val,
+                     region=lead_id_val,
                      use_local=use_local)
 
         # Build command
-        lead_id = self.lead_id_var.get().strip() or "valles"
+        lead_id = lead_id_val
         cmd = ["/opt/anaconda3/bin/kedro", "run", "--pipeline", pipeline,
-               "--params", f"lead_id={lead_id}"]
+               "--params", f"lead_id={lead_id},region={lead_id}"]
         env = get_aws_env(
             key=self.aws_key.get(),
             secret=self.aws_secret.get(),
@@ -525,17 +530,18 @@ class App(tk.Tk):
     def _show_image(self, key: str):
         country  = self.country_var.get()
         lead_id  = self.lead_id_var.get().strip() or "valles"
+        region   = lead_id
         use_local = self.data_loc_var.get() == "Local"
 
         if use_local:
-            local = local_outputs(country, lead_id)[key]
+            local = local_outputs(country, region, lead_id)[key]
             if not local.exists():
                 self._log(f"❌ File not found: {local}", "ERROR")
                 return
             self._open_image_window(local, key)
             return
 
-        paths   = s3_outputs(country, lead_id)
+        paths   = s3_outputs(country, region, lead_id)
         s3_path = paths[key]
 
         def _load():
@@ -573,10 +579,11 @@ class App(tk.Tk):
     def _show_pricing(self):
         country   = self.country_var.get()
         lead_id   = self.lead_id_var.get().strip() or "valles"
+        region    = lead_id
         use_local = self.data_loc_var.get() == "Local"
 
         if use_local:
-            local = local_outputs(country, lead_id)["pricing"]
+            local = local_outputs(country, region, lead_id)["pricing"]
             if not local.exists():
                 self._log(f"❌ File not found: {local}", "ERROR")
                 return
@@ -585,7 +592,7 @@ class App(tk.Tk):
             self._open_table_window(df, "Pricing Quote")
             return
 
-        paths = s3_outputs(country, lead_id)
+        paths = s3_outputs(country, region, lead_id)
 
         def _load():
             try:
