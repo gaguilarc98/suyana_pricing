@@ -186,8 +186,216 @@ def get_window_days(doy, window=30):
     """Return list of days-of-year within ±window of doy (wrap around at 365)."""
     days = np.arange(doy - window, doy + window + 1)
     return ((days - 1) % 365) + 1
+ 
+ 
+def get_cdf_fixed_data(
+    ds: xr.Dataset, 
+    ds_base: xr.Dataset, 
+    field_target: str, 
+    field_base: str,
+    group_cols: list, 
+    level: str = None,
+    window_size: int = 45,
+    min_pool: int = 5,
+    n_jobs: int = 6,
+) -> xr.DataArray:
+    """
+    Performs a rolling day-of-year CDF (quantile) matching of the target field onto
+    the distribution of the base field.
+ 
+    This is the reproduction of Planet's actual harmonization. For each pixel/group
+    and each day-of-year, the empirical distribution is built from all days whose
+    day-of-year falls within +/-window_size (wrapping at year end), on BOTH the
+    source and base sides. Each daily target value is converted to its empirical
+    quantile in the windowed source pool and mapped to the interpolated value at
+    the same quantile of the windowed base pool. Interpolation (np.quantile) on the
+    base side is what reproduces Planet's smoothness and distribution, replacing the
+    discrete rank-bucket lookup used previously.
+ 
+    Args:
+        - ds : (xr.Dataset) Dataset whose field_target will be rescaled
+        - ds_base : (xr.Dataset) Dataset providing the reference distribution (field_base)
+        - field_target : (str) Name of the field to rescale in ds
+        - field_base : (str) Name of the reference field in ds_base
+        - group_cols : (list) Grouping dimensions (must be a subset of ds.dims), e.g. [location_id]
+        - level : (str) Time level for the rolling window. Only 'dayofyear' is supported.
+        - window_size : (int) Half-width in days of the day-of-year window (Planet uses 45)
+        - min_pool : (int) Minimum number of valid values required on each side to match
+        - n_jobs : (int) Parallel workers across day-of-year
+    Returns:
+        - xr.DataArray with the rescaled field, indexed by the original dims of ds
+    """
+    # Get dimensions and check that group_cols is a subset of the dimensions
+    dims = list(ds.sizes.keys())
+    if not set(group_cols).issubset(set(dims)):
+        raise ValueError('group_cols must be a subset of dims from first Dataset')
+    if level is None:
+        level = 'dayofyear'
+    if level != 'dayofyear':
+        raise ValueError("get_cdf_fixed_data only supports level='dayofyear'")
+ 
+    # Add day-of-year coordinate on both sides and move to dataframes
+    ds_o = ds.copy()
+    ds_b = ds_base.copy()
+    ds_o = add_time_coordinate(ds, level=level)
+    ds_b = add_time_coordinate(ds_base, level=level)
+ 
+    df_o = ds_o.to_dataframe().reset_index()
+    df_b = ds_b.to_dataframe().reset_index()
+ 
+    # Pre-group the base pools by day-of-year for fast windowed lookup
+    base_by_doy = {d: g for d, g in df_b.groupby('dayofyear')}
+ 
+    def cdf_matching_day(day):
+        df_orig = df_o[df_o['dayofyear'] == day]
+        if df_orig.empty:
+            return None
+ 
+        # Build the +/-window day-of-year base pool for this day
+        list_days = get_window_days(day, window=window_size)
+        base_parts = [base_by_doy[d] for d in list_days if d in base_by_doy]
+        if not base_parts:
+            return None
+        df_base = pd.concat(base_parts, axis=0)
+ 
+        # Source pool uses the SAME windowed days so the empirical quantile of each
+        # daily value is estimated over the local seasonal distribution, not a single day
+        src_pool_all = df_o[df_o['dayofyear'].isin(list_days)]
+ 
+        out_parts = []
+        for key, g_orig in df_orig.groupby(group_cols):
+            mask_base = np.ones(len(df_base), dtype=bool)
+            mask_src = np.ones(len(src_pool_all), dtype=bool)
+            for col, val in zip(group_cols, key if isinstance(key, tuple) else (key,)):
+                mask_base &= (df_base[col].values == val)
+                mask_src &= (src_pool_all[col].values == val)
+ 
+            base_pool = df_base.loc[mask_base, field_base].dropna().values
+            src_pool = src_pool_all.loc[mask_src, field_target].dropna().values
+ 
+            g_out = g_orig[dims].copy()
+            if len(base_pool) < min_pool or len(src_pool) < min_pool:
+                g_out[field_base] = np.nan
+            else:
+                src_sorted = np.sort(src_pool)
+                vals = g_orig[field_target].values
+                # Empirical quantile of each value within the windowed source pool
+                q = np.searchsorted(src_sorted, vals, side='right') / len(src_sorted)
+                q = np.clip(q, 0.0, 1.0)
+                # Interpolated value at that quantile of the windowed base pool
+                mapped = np.quantile(base_pool, q)
+                mapped[np.isnan(vals)] = np.nan
+                g_out[field_base] = mapped
+            out_parts.append(g_out)
+ 
+        return pd.concat(out_parts, axis=0, ignore_index=True)
+ 
+    df_list = Parallel(n_jobs=n_jobs)(
+        delayed(cdf_matching_day)(day) for day in np.arange(1, 367)
+    )
+    df_list = [d for d in df_list if d is not None]
+ 
+    df_list = pd.concat(df_list, axis=0, ignore_index=True)
+    df_list = df_list.sort_values(by=group_cols + ['time'])
+ 
+    da = df_list.set_index(dims).to_xarray()[field_base]
+ 
+    return da
 
+'''
+def get_cdf_fixed_data(
+    ds: xr.Dataset, 
+    ds_base: xr.Dataset, 
+    field_target: str, 
+    field_base: str,
+    group_cols: list, 
+    level: str = None,
+    window_size: int = 30
+) -> xr.DataArray:
+    """
+    Performs a CDF Matching of original dataset field based on values from base dataset field
+    Args:
+        - ds : (xr.Dataset) Original dataset on which CDF matching will be applied
+        - ds_base : (xr.Dataset) Base dataset used for CDF matching
+        - field : (str) Name of field to use for CDF
+        - group_cols : (list) List of names to group on for CDF (must be a subset of ds.dims)
+        - level : (str) Name of time coordinate to group on if None the distribution will be computed from all values
+    Returns:
+        - xr.DataArray with the fixed valued after applying CDF Matching
+    """
+    # Get dimensions and checking that group_cols is a subset of the dimensions
+    dims = list(ds.sizes.keys())
+    if not set(group_cols).issubset(set(dims)):
+        raise ValueError('group_cols must be a subset of dims from first Dataset')
+    #group_cols = ['climate_area_id']
 
+    # Adding time coordinate to compute CDF
+    if level is not None:
+        ds_o = add_time_coordinate(ds, level=level)
+        ds_b = add_time_coordinate(ds_base, level=level)
+
+    # Convert temporarily to dataframes
+    df_o = ds_o.to_dataframe().reset_index()
+    df_b = ds_b.to_dataframe().reset_index()
+    
+    def cdf_matching_day(day):
+        list_days = get_window_days(day, window=window_size)
+        df_orig = df_o[df_o['dayofyear'] == day].copy()
+        df_base = df_b[df_b['dayofyear'].isin(list_days)].copy()
+
+        if df_orig.empty or df_base.empty:
+            return
+
+        # Build the base distribution from NON-NULL values only
+        df_base = df_base.dropna(subset=[field_base])
+        if df_base.empty:
+            return
+
+        df_base["rank"] = df_base.groupby(group_cols)[field_base].rank(method="first")
+        # count() excludes NaN; size() does not. We already dropped NaN, but use count to be safe.
+        df_aux = df_base.groupby(group_cols, as_index=False)[field_base].count()
+        df_aux = df_aux.rename(columns={field_base: 'size'})
+
+        # prop_rank: rank() already returns NaN for NaN source values, so they propagate correctly
+        df_orig["prop_rank"] = df_orig.groupby(group_cols)[field_target].rank(method="max", pct=True)
+
+        df_orig = df_orig.merge(df_aux, how='left', on=group_cols)
+        df_orig['rank'] = np.floor(df_orig['prop_rank'] * df_orig['size'])
+
+        # Clamp rank into the valid range [1, size]: prop_rank==1.0 gives floor(1.0*size)=size,
+        # which is a valid rank; but floating error can push it to size, and prop_rank near 0
+        # can give 0. Ranks from method="first" run 1..size, so clamp to that.
+        df_orig['rank'] = df_orig['rank'].clip(lower=1)
+
+        drop_cols = ["rank"] if level is None else [level, "rank"]
+
+        df_base_dedup = (
+            df_base[group_cols + ['rank', field_base]]
+            .drop_duplicates(subset=group_cols + ['rank'], keep='first')
+        )
+
+        df_orig = df_orig[dims + drop_cols].merge(
+            df_base_dedup,
+            how='left',
+            on=group_cols + ['rank']
+        )
+        df_orig = df_orig.drop(columns=drop_cols)
+        return df_orig
+
+    df_list = Parallel(n_jobs=6)(
+        delayed(cdf_matching_day)(day) for day in np.arange(1, 367)
+    )
+
+    df_list = pd.concat(df_list, axis=0, ignore_index=True)
+
+    df_list = df_list.sort_values(by = group_cols + ['time'])
+
+    da = df_list.set_index(dims).to_xarray()[field_base]
+
+    return da
+'''
+
+'''
 def get_cdf_fixed_data(
     ds: xr.Dataset, 
     ds_base: xr.Dataset, 
@@ -271,7 +479,103 @@ def get_cdf_fixed_data(
     da = df_list.set_index(dims).to_xarray()[field_base]
 
     return da
+'''
 
+'''
+def get_cdf_fixed_data(
+    ds: xr.Dataset,
+    ds_base: xr.Dataset,
+    field_target: str,
+    field_base: str,
+    group_cols: list,
+    level: str = None,
+    window_size: int = 30
+) -> xr.DataArray:
+    """
+    Performs a CDF Matching of original dataset field based on values from base dataset field
+    Args:
+        - ds : (xr.Dataset) Original dataset on which CDF matching will be applied
+        - ds_base : (xr.Dataset) Base dataset used for CDF matching
+        - field : (str) Name of field to use for CDF
+        - group_cols : (list) List of names to group on for CDF (must be a subset of ds.dims)
+        - level : (str) Name of time coordinate to group on if None the distribution will be computed from all values
+    Returns:
+        - xr.DataArray with the fixed valued after applying CDF Matching
+    """
+    # Get dimensions and check that group_cols is a subset of the dimensions
+    dims = list(ds.sizes.keys())
+    if not set(group_cols).issubset(set(dims)):
+        raise ValueError('group_cols must be a subset of dims from first Dataset')
+ 
+    # Add time coordinate to compute CDF
+    if level is not None:
+        ds_o = add_time_coordinate(ds, level=level)
+        ds_b = add_time_coordinate(ds_base, level=level)
+    else:
+        ds_o = ds
+        ds_b = ds_base
+ 
+    # Convert temporarily to dataframes
+    df_o = ds_o.to_dataframe().reset_index()
+    df_b = ds_b.to_dataframe().reset_index()
+ 
+    # ----- OPTIONAL upper-tail winsorization -----
+    # Genuine target outliers can still be pushed into the extreme tail of the
+    # base distribution. To cap that, clip the target CDF probability before
+    # interpolation. Disabled by default; set 0 < pclip < 1 to enable.
+    pclip = None  # e.g. pclip = 0.99
+ 
+    def _map_group(df_orig_g, base_vals):
+        """Map one group's target CDF probability onto the base empirical quantiles."""
+        out = df_orig_g.copy()
+        if base_vals.size == 0:
+            out[field_base] = np.nan
+            return out
+        bq = np.sort(base_vals)
+        # Plotting-position probabilities for the sorted base sample
+        qp = (np.arange(1, bq.size + 1) - 0.5) / bq.size
+        # Target empirical CDF probability within this day-of-year group
+        pr = out[field_target].rank(method='average', pct=True).values
+        if pclip is not None:
+            pr = np.clip(pr, None, pclip)
+        out[field_base] = np.interp(pr, qp, bq)
+        return out
+ 
+    def cdf_matching_day(day):
+        list_days = get_window_days(day, window=window_size)
+        df_orig = df_o[df_o['dayofyear'] == day].copy()
+        df_base = df_b[df_b['dayofyear'].isin(list_days)].copy()
+ 
+        if df_orig.empty or df_base.empty:
+            return
+ 
+        # Per-group base samples (pooled over the day-of-year window)
+        base_groups = {
+            key: sub[field_base].dropna().values
+            for key, sub in df_base.groupby(group_cols)
+        }
+ 
+        # Map each target group through its base empirical quantiles
+        pieces = []
+        for key, sub in df_orig.groupby(group_cols):
+            base_vals = base_groups.get(key, np.array([]))
+            pieces.append(_map_group(sub, base_vals))
+ 
+        df_orig = pd.concat(pieces, axis=0)
+ 
+        return df_orig[dims + [field_base]]
+ 
+    df_list = Parallel(n_jobs=6)(
+        delayed(cdf_matching_day)(day) for day in np.arange(1, 367)
+    )
+ 
+    df_list = pd.concat([d for d in df_list if d is not None], axis=0, ignore_index=True)
+    df_list = df_list.sort_values(by=group_cols + ['time'])
+ 
+    da = df_list.set_index(dims).to_xarray()[field_base]
+ 
+    return da
+'''
 
 #———————————————————————————————————————————
 # ADD CLIMATOLOGY TO DATASET
@@ -577,7 +881,148 @@ def preprocess_planet(df, params_transform, n_jobs=6):
 # PROCESS DATASET FROM PLANET
 #———————————————————————————————————————————
 
+'''
+def process_data_planet(
+    ds1_orig: xr.Dataset, 
+    ds2_orig: xr.Dataset, 
+    ds_era_orig: xr.Dataset, 
+    gdf: gpd.GeoDataFrame, 
+    params: dict
+) -> tuple:
+    """
+    Clean and process dataset to get unique time series and add anomalies and climatologies
+    Args:
+        - ds1_orig : (xr.Dataset) Dataset from first period of Planet
+        - ds_era_orig : (xr.Dataset) Dataset from ERA5 to fill gap
+        - ds2_orig : (xr.Dataset) Dataset from second period of Planet 
+        - gdf : (gpd.GeoDataFrame) GeoDataFrame with geometries
+        - params : (dict) Dictionary with parameters to process data
+    
+    Returns:
+        - df_concat : pd.DataFrame with processed data
+        - ds_clim : xr.Dataset with climatologies
+    """
+    # Read parameters from dictionary
+    subset = params['subset']
+    #location_var = params['location_var']
+    variable = params['variable']
+    na_replace_era5 = params['na_replace']['era5']
+    na_replace_planet = params['na_replace']['planet']
+    period_planet1 = params['time_window']['planet1']
+    period_planet2 = params['time_window']['planet2']
+    period_era5 = params['time_window']['era5']
+    interp_resolution = params.get('interp_resolution', 0.01)
+    fill_gap_window = params.get('fill_gap_window', 7)
+    cdf_time_window = params.get('cdf_time_window', 45)
+    time_smooth_window = params.get('time_smooth_window', 21)
+    clim_smooth_window = params.get('climatology_smooth_window', 7)
+    add_abs_anom = params.get('add_abs_anom', True)
+ 
+    # Subset climate area geometry
+    LOCATION_NAME = 'location_id'
+    gdf_ca = rename_subset_geometry(gdf, subset, LOCATION_NAME)
+ 
+    # Slice dataset using the given geometry
+    ds_era = slice_dataset_w_geometry(ds_era_orig, gdf_ca)
+ 
+    # Interpolate data from ERA5 to a finer resolution
+    ds_era = regrid_dataset(ds_era, method='linear', res=interp_resolution)
+ 
+    # Rename variables to use uniform names
+    ds1_orig = rename_vars(ds1_orig, variable)
+    ds2_orig = rename_vars(ds2_orig, variable)
+    ds_era = rename_vars(ds_era, variable)
+ 
+    # Remove unnecesary coordinates
+    keep_coords = list(get_coordinates(ds_era)) # list of coords to keep
+    ds_era = drop_single_coords(ds_era, except_coords=keep_coords)[[variable]] 
+ 
+    keep_coords_1 = list(get_coordinates(ds1_orig)) # list of coords to keep
+    ds1_orig = drop_single_coords(ds1_orig, except_coords=keep_coords)[[variable]]
+ 
+    keep_coords_1 = list(get_coordinates(ds2_orig)) # list of coords to keep
+    ds2_orig = drop_single_coords(ds2_orig, except_coords=keep_coords)[[variable]] 
+ 
+    # Clean data with time slices and na replace values
+    ds_period1 = clean_data(ds1_orig, date_range=period_planet1, var=variable, na_replace=na_replace_planet)
+    ds_period2 = clean_data(ds2_orig, date_range=period_planet2, var=variable, na_replace=na_replace_planet)
+    ds_gap = clean_data(ds_era, date_range = ('2002-01-01', None), var=variable, na_replace=na_replace_era5)
+    print(f"Cleaning done")
+ 
+    ds_period1, df1_ = create_cluster_coord(ds_period1, gdf_ca, LOCATION_NAME) #Using v2 is faster since it applies a spatial join
+    ds_period2, df2_ = create_cluster_coord(ds_period2, gdf_ca, LOCATION_NAME) #Using v2 is faster since it applies a spatial join
+    ds_gap, dfg_ = create_cluster_coord(ds_gap, gdf_ca, LOCATION_NAME) #Using v2 is faster since it applies a spatial join
+ 
+    # Summarize the arrays along a specified dimension
+    ds_period1 = summarize_data(ds_period1, group_coords=[LOCATION_NAME], func='mean')
+    ds_period2 = summarize_data(ds_period2, group_coords=[LOCATION_NAME], func='mean')
+    ds_gap = summarize_data(ds_gap, group_coords=[LOCATION_NAME], func='mean')
+    print(f"Clustering and summarizing done")
+ 
+    # Planet harmonization:
+    #   - AMSR2 (ds_period2) is the baseline and is kept untouched.
+    #   - The entire pre-AMSR2 record (AMSR-E era + gap) is represented by the
+    #     continuous ERA5 series and CDF-matched once, directly onto the AMSR2
+    #     distribution. The AMSR-E sensor values (ds_period1) do not contribute.
+    # The CDF matching works on the original (unsmoothed) time series; the rolling
+    # day-of-year window inside get_cdf_fixed_data provides the smoothing.
+ 
+    # Build the continuous pre-AMSR2 ERA5 source: everything strictly before AMSR2 start.
+    amsr2_start = pd.to_datetime(period_planet2[0])
+    pre_end = str((amsr2_start - pd.Timedelta(days=1)).date())
+    ds_pre_era = clean_data(ds_gap, date_range=('2002-01-01', pre_end))
+ 
+    # Single-step CDF (quantile) matching: continuous ERA5 -> AMSR2 baseline
+    ds_pre_era[f'{variable}_smooth'] = get_cdf_fixed_data(
+        ds = ds_pre_era,
+        ds_base = ds_period2,
+        field_target = variable,
+        field_base = variable,
+        group_cols = [LOCATION_NAME],
+        level = 'dayofyear',
+        window_size = cdf_time_window
+    )
+    print(f"CDF matching done")
+ 
+    # AMSR2 passthrough: the baseline value is the raw observation
+    ds_period2[f'{variable}_smooth'] = ds_period2[variable]
+ 
+    # Join the rescaled pre-AMSR2 ERA5 with the raw AMSR2 baseline into one series
+    ds_concat = xr.concat([ds_pre_era, ds_period2], dim='time')
+    print(f"Concatenating arrays done")
+ 
+    # The harmonized series is the matched/baseline value. Keep the per-source
+    # original observation in {variable}_orig for reference.
+    ds_concat = ds_concat.rename({variable: f'{variable}_orig'})
+    ds_concat[variable] = ds_concat[f'{variable}_smooth']
+ 
+    # Downstream steps in the requested order: clean_data -> climatology -> anomalies.
+    # (The first get_smooth_series on the source is intentionally skipped so the
+    #  harmonized series matches the reproduction built on the original time series.)
+    ds_concat = clean_data(ds_concat, var=[f'{variable}_orig', f'{variable}_smooth', variable])
+ 
+    ds_concat, ds_clim = get_climatology(
+        ds_concat, variable, f'clim_{variable}', level='dayofyear', smooth_window=clim_smooth_window
+    )
+ 
+    # Compute anomalies using the added climatology
+    ds_concat[f'anom_{variable}'] = ds_concat[variable] - ds_concat[f'clim_{variable}']
+    print('Climatology and anomaly successfully added')
+ 
+    df_concat = ds_concat.to_dataframe().reset_index()
+ 
+    if add_abs_anom:
+        df_concat[f'neg_anom_{variable}'] = np.where(
+            df_concat[f'anom_{variable}'] >=0, 0, df_concat[f'anom_{variable}'] * (-1)
+        ) 
+        df_concat[f'pos_anom_{variable}'] = np.where(
+            df_concat[f'anom_{variable}'] <=0, 0, df_concat[f'anom_{variable}']
+        ) 
+ 
+    return df_concat, ds_clim
+'''
 
+'''
 def process_data_planet(
     ds1_orig: xr.Dataset, 
     ds2_orig: xr.Dataset, 
@@ -656,10 +1101,164 @@ def process_data_planet(
     print(f"Clustering and summarizing done")
 
     # Smooth time series given the smooth window
-    ds_period1[f'{variable}_smooth'] = get_smooth_series(ds_period1, variable, fill_gap_window)
+    #ds_period1[f'{variable}_smooth'] = get_smooth_series(ds_period1, variable, fill_gap_window)
+    #ds_period2[f'{variable}_smooth'] = get_smooth_series(ds_period2, variable, fill_gap_window)
+    ds_period2[f'{variable}_cdf'] = ds_period2[variable]
+
+    # Apply CDF matching to the time series with the second period of planet as basis
+    ds_gap[f'{variable}_cdf'] = get_cdf_fixed_data(
+        ds = ds_gap, 
+        ds_base = ds_period2, 
+        field_target = variable, 
+        field_base = variable,
+        group_cols = [LOCATION_NAME], 
+        level = 'dayofyear', 
+        window_size = cdf_time_window
+    )
+    # Use ERA5 as a bridge between Planet AMSRE and Planet AMSR2
+    ds_period1[f'{variable}_cdf'] = get_cdf_fixed_data(
+        ds = ds_period1, 
+        ds_base = ds_gap, 
+        field_target = f'{variable}', 
+        field_base = f'{variable}_cdf',
+        group_cols = [LOCATION_NAME], 
+        level = 'dayofyear', 
+        window_size = cdf_time_window
+    )
+    ds_gap = clean_data(ds_gap, date_range=period_era5)
+    print(f"CDF matching done")
+
+    # Join and smooth the resulting time series
+    ds_concat = xr.concat([ds_period1, ds_gap, ds_period2], dim='time')
+    print(f"Concatenating arrays done")
+    
+    ds_concat = ds_concat.rename({variable: f'{variable}_orig'})
+    ds_concat[variable] = get_smooth_series(ds_concat, f'{variable}_cdf', time_smooth_window)
+
+    ds_concat, ds_clim = get_climatology(
+        ds_concat, variable, f'clim_{variable}', level='dayofyear', smooth_window=clim_smooth_window
+    )
+    
+    # Compute anomalies using the added climatology
+    ds_concat[f'anom_{variable}'] = ds_concat[variable] - ds_concat[f'clim_{variable}']
+    print('Climatology and anomaly successfully added')
+
+    df_concat = ds_concat.to_dataframe().reset_index()
+
+    if add_neg_anom:
+        df_concat[f'neg_anom_{variable}'] = np.where(
+            df_concat[f'anom_{variable}'] >=0, 0, df_concat[f'anom_{variable}'] * (-1)
+        ) 
+
+    return df_concat, ds_clim
+'''
+
+def process_data_planet(
+    ds1_orig: xr.Dataset, 
+    ds2_orig: xr.Dataset, 
+    ds_era_orig: xr.Dataset, 
+    gdf: gpd.GeoDataFrame, 
+    params: dict
+) -> tuple:
+    """
+    Clean and process dataset to get unique time series and add anomalies and climatologies
+    Args:
+        - ds1_orig : (xr.Dataset) Dataset from first period of Planet
+        - ds_era_orig : (xr.Dataset) Dataset from ERA5 to fill gap
+        - ds2_orig : (xr.Dataset) Dataset from second period of Planet 
+        - gdf : (gpd.GeoDataFrame) GeoDataFrame with geometries
+        - params : (dict) Dictionary with parameters to process data
+    
+    Returns:
+        - df_concat : pd.DataFrame with processed data
+        - ds_clim : xr.Dataset with climatologies
+    """
+    # Read parameters from dictionary
+    subset = params['subset']
+    #location_var = params['location_var']
+    variable = params['variable']
+    na_replace_era5 = params['na_replace']['era5']
+    na_replace_planet = params['na_replace']['planet']
+    period_planet1 = params['time_window']['planet1']
+    period_planet2 = params['time_window']['planet2']
+    period_era5 = params['time_window']['era5']
+    interp_resolution = params.get('interp_resolution', 0.01)
+    fill_gap_window = params.get('fill_gap_window', 7)
+    cdf_time_window = params.get('cdf_time_window', 45)
+    time_smooth_window = params.get('time_smooth_window', 21)
+    clim_smooth_window = params.get('climatology_smooth_window', 7)
+    add_abs_anom = params.get('add_abs_anom', True)
+
+    # Subset climate area geometry
+    LOCATION_NAME = 'location_id'
+    gdf_ca = rename_subset_geometry(gdf, subset, LOCATION_NAME)
+
+    # Slice dataset using the given geometry
+    ds_era = slice_dataset_w_geometry(ds_era_orig, gdf_ca)
+
+    # Interpolate data from ERA5 to a finer resolution
+    ds_era = regrid_dataset(ds_era, method='linear', res=interp_resolution)
+
+    # Rename variables to use uniform names
+    #ds1_orig = rename_vars(ds1_orig, variable)
+    ds2_orig = rename_vars(ds2_orig, variable)
+    ds_era = rename_vars(ds_era, variable)
+
+    # Remove unnecesary coordinates
+    keep_coords = list(get_coordinates(ds_era)) # list of coords to keep
+    ds_era = drop_single_coords(ds_era, except_coords=keep_coords)[[variable]] 
+
+    #keep_coords_1 = list(get_coordinates(ds1_orig)) # list of coords to keep
+    #ds1_orig = drop_single_coords(ds1_orig, except_coords=keep_coords_1)[[variable]]
+
+    keep_coords_2 = list(get_coordinates(ds2_orig)) # list of coords to keep
+    ds2_orig = drop_single_coords(ds2_orig, except_coords=keep_coords_2)[[variable]] 
+
+    # Clean data with time slices and na replace values
+    #ds_period1 = clean_data(ds1_orig, date_range=period_planet1, var=variable, na_replace=na_replace_planet)
+    ds_period2 = clean_data(ds2_orig, date_range=period_planet2, var=variable, na_replace=na_replace_planet)
+    ds_gap = clean_data(ds_era, date_range = ('2002-01-01', None), var=variable, na_replace=na_replace_era5)
+    print(f"Cleaning done")
+
+    #ds_period1, df1_ = create_cluster_coord(ds_period1, gdf_ca, LOCATION_NAME) #Using v2 is faster since it applies a spatial join
+    ds_period2, df2_ = create_cluster_coord(ds_period2, gdf_ca, LOCATION_NAME) #Using v2 is faster since it applies a spatial join
+    ds_gap, dfg_ = create_cluster_coord(ds_gap, gdf_ca, LOCATION_NAME) #Using v2 is faster since it applies a spatial join
+
+    # Summarize the arrays along a specified dimension
+    #ds_period1 = summarize_data(ds_period1, group_coords=[LOCATION_NAME], func='mean')
+    ds_period2 = summarize_data(ds_period2, group_coords=[LOCATION_NAME], func='mean')
+    ds_gap = summarize_data(ds_gap, group_coords=[LOCATION_NAME], func='mean')
+    print(f"Clustering and summarizing done")
+
+    # Smooth time series given the smooth window
+    #ds_period1[f'{variable}_smooth'] = get_smooth_series(ds_period1, variable, fill_gap_window)
     ds_period2[f'{variable}_smooth'] = get_smooth_series(ds_period2, variable, fill_gap_window)
 
     # Apply CDF matching to the time series with the second period of planet as basis
+    
+    ds_gap[f'{variable}_smooth'] = get_cdf_fixed_data(
+        ds=ds_gap,
+        ds_base=ds_period2,
+        field_target=variable,
+        field_base=f'{variable}_smooth',
+        group_cols=[LOCATION_NAME],
+        level='dayofyear',
+        window_size=cdf_time_window
+    )
+    # CHANGED: AMSRE (period1) is now CDF-matched DIRECTLY to AMSR2 (period2),
+    # not to the CDF-fixed ERA5 gap. The previous AMSR2 -> ERA5 -> AMSRE chain
+    # routed AMSRE through ERA5's wetter, compressed distribution and biased the
+    # AMSRE era upward. ERA5 is retained only to fill the gap below.
+    #ds_period1[f'{variable}_smooth'] = get_cdf_fixed_data(
+    #    ds=ds_period1,
+    #    ds_base=ds_period2,
+    #    field_target=f'{variable}_smooth',
+    #    field_base=f'{variable}_smooth',
+    #    group_cols=[LOCATION_NAME],
+    #    level='dayofyear',
+    #    window_size=cdf_time_window
+    #)
+    '''
     ds_gap[f'{variable}_smooth'] = get_cdf_fixed_data(
         ds = ds_gap, 
         ds_base = ds_period2, 
@@ -679,6 +1278,8 @@ def process_data_planet(
         level = 'dayofyear', 
         window_size = cdf_time_window
     )
+    '''
+    ds_period1 = clean_data(ds_gap, date_range=period_planet1)
     ds_gap = clean_data(ds_gap, date_range=period_era5)
     print(f"CDF matching done")
 
@@ -699,13 +1300,15 @@ def process_data_planet(
 
     df_concat = ds_concat.to_dataframe().reset_index()
 
-    if add_neg_anom:
+    if add_abs_anom:
         df_concat[f'neg_anom_{variable}'] = np.where(
             df_concat[f'anom_{variable}'] >=0, 0, df_concat[f'anom_{variable}'] * (-1)
         ) 
+        df_concat[f'pos_anom_{variable}'] = np.where(
+            df_concat[f'anom_{variable}'] <=0, 0, df_concat[f'anom_{variable}']
+        ) 
 
     return df_concat, ds_clim
-
 
 #———————————————————————————————————————————
 # PROCESS DATASET WITH ANOMALIES

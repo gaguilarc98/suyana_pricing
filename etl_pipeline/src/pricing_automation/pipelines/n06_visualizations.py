@@ -361,20 +361,16 @@ def create_activation_map(
     params_map keys: window, crop, tail, season_name,
                      start_year (optional), location_var (optional).
     """
-    window      = params_map['window']
-    crop        = params_map['crop']
-    tail        = params_map['tail']
-    season_name = params_map['season_name']
+    title = params_map.get('title', 'Activation map -- | window | tail')
     location_var = params_s.get('location_var', 'location_id')
  
     gdf = subset_geometry(gdf, params_s)
     gdf = gdf.to_crs(epsg='4326')
  
-    df = df_payouts[
-        (df_payouts['window'] == window) &
-        (df_payouts['crop']   == crop)   &
-        (df_payouts['tail']   == tail)
-    ].copy()
+    df = subset_geometry(df_payouts, params_map)
+
+    data_max = df['perc_payout'].max()  # or masked.max() to ignore zeros
+    vmax = data_max if data_max > 0 else 1.0
  
     if 'start_year' in params_map:
         df = df[df['window_year'] >= params_map['start_year']].copy()
@@ -384,7 +380,7 @@ def create_activation_map(
     # Max perc_payout per (location, year) in case of duplicates
     df = (
         df.groupby([location_var, 'window_year'])['perc_payout']
-        .max()
+        .mean()
         .reset_index()
     )
  
@@ -392,7 +388,6 @@ def create_activation_map(
  
     # Colormap: midnightblue for zero, green->red for non-zero
     cmap_grad = LinearSegmentedColormap.from_list('payout', ['darkgreen', 'gold', 'crimson'])
-    vmax      = df['perc_payout'].max()
  
     def plot_year(ax_i, gdf_year):
         """Plot a single year, splitting zero and non-zero payout polygons."""
@@ -417,8 +412,11 @@ def create_activation_map(
     if n_years <= 5:
         fig, ax = plt.subplots(1, n_years, figsize=(5*n_years, 6))
         years = np.arange(min(list_years), max(list_years)+1, 1)
+    elif n_years <= 10:
+        fig, ax = plt.subplots(2, 5, figsize=(14, 6.5))
+        years = np.arange(min(list_years), max(list_years)+1, 1)
     elif n_years <= 15:
-        fig, ax = plt.subplots(3, 5, figsize=(18, 14.5))
+        fig, ax = plt.subplots(3, 5, figsize=(18, 8.5))
         years = np.arange(min(list_years), min(list_years) + 15, 1)
     elif n_years <= 20:
         fig, ax = plt.subplots(4, 5, figsize=(24, 14.5))
@@ -440,7 +438,7 @@ def create_activation_map(
  
         plot_year(ax[i], gdf_year)
  
-        ax[i].set_aspect('auto')# 'equal', 'auto'
+        ax[i].set_aspect('equal')# 'equal', 'auto'
         ax[i].xaxis.set_major_formatter(FuncFormatter(format_longitude))
         ax[i].yaxis.set_major_formatter(FuncFormatter(format_latitude))
         ax[i].tick_params(axis='x', labelcolor='gray', labelsize=7, rotation=0)
@@ -455,7 +453,7 @@ def create_activation_map(
     cbar.set_label('Payout fraction', size=10)
  
     plt.suptitle(
-        f"Activation map -- {season_name} | window {window} | {crop} | {tail} tail",
+        title,
         fontsize=14, y=0.96
     )
     #plt.tight_layout()

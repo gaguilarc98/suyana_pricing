@@ -45,8 +45,8 @@ ds_request:
   #type: pricing_automation.datasets_registry.NetCDFPartitionedDataset
   #filepath: data/${_arg.country}/sources/${_arg.provider}/${_arg.field}_<partition>.nc
   type: pricing_automation.datasets_registry.ZarrPartitionedDataset
-  filepath: s3://suyana-ews/${_arg.country}/sources/UCSB_prcp_<partition>.zarr
-  #filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/sources/${_arg.provider}_${_arg.field}_<partition>.zarr
+  #filepath: s3://suyana-ews/${_arg.country}/sources/UCSB_prcp_<partition>.zarr
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/sources/${_arg.provider}_${_arg.field}_<partition>.zarr
   save_args:
     consolidated: true
     mode: w

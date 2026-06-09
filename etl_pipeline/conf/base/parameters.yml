@@ -15,7 +15,7 @@ params_s:
   include: {
     #'DEPTO': ['CASANARE', 'META']
     'aoa': ['Selected'], 
-    #'municipio': ['Mizque','Quillacollo', 'Colomi', 'Tarija', 'Yapacani', 'Puerto Villarroel', 'Chimoré']
+    'municipio': ['Mizque','Quillacollo', 'Colomi', 'Tarija', 'Yapacani', 'Puerto Villarroel', 'Chimoré']
   }
   exclude: {}
   simplify: false #true
@@ -57,13 +57,16 @@ params_process:
   
 # Parameters for creating indices
 params_indices:
-  variable: 'prcp' #'neg_anom_swc' #
+  variable: 'neg_anom_swc' #'prcp'
   group_cols: ['location_id']
-  dist: 'gamma' #'t' #
-  start_time: '2006-01-01'
+  dist: 't' #'gamma' #
+  start_time: '2014-10-01'
   windows: 
-    1: ['05-01', '09-30'] #['06-01', '12-31'] # # main growing season
-    #2: ['10-01', '05-31'] #['08-01', '01-31'] # # second season (crosses year-end)
+    1: ['06-01', '12-31'] #['05-01', '09-30'] # main growing season
+    2: ['10-01', '05-31'] #['08-01', '01-31'] # # second season (crosses year-end)
+    #1: ['08-01', '11-30']
+    #2: ['06-01', '10-31']
+    #3: ['12-01', '02-28']
 
 params_contract:
   # Shared pricing defaults (override per crop or tail if needed)
@@ -89,6 +92,10 @@ params_contract:
             upper: 
               design: 'layered' #'continuous' #
               levels: {80: 0.30, 90: 0.4, 95: 0.5} #[90, 99] #
+          #3:
+          #  upper:
+          #    design: 'layered' #'continuous' #
+          #    levels: {80: 0.30, 90: 0.4, 95: 0.5}
 
 # Parameters for boostrap analysis
 params_bootstrap:
@@ -103,11 +110,12 @@ params_quote:
 
 # Viz parameters
 params_map:
-  window: 1
-  crop: all
-  tail: upper
-  season_name: 06-01 to 12-31 (deficit) # custom
-  start_year: 2023   # optional
+  include : {
+    'window': [1, 2],
+    'tail': ['upper']
+  }
+  title: Activaciones Promedio — Verano e Invierno — Exceso y Déficit # custom
+  start_year: 2014   # optional
 
 params_series:
   id_location:   ID-0196 #ID-102-01 #ID-0196
