@@ -9,7 +9,7 @@
 _arg:
   country: ${runtime_params:country, ${globals:country}}
   region: ${runtime_params:region, ${globals:region}}
-  lead_id: ${runtime_params:lead_id, 'test1'}
+  lead_id: ${runtime_params:lead_id, 'valles'}
   provider: ${runtime_params:provider, ${globals:provider}}
   field: ${runtime_params:field, ${globals:field}}
   version: ${runtime_params:version, ${globals:version}}
@@ -17,10 +17,32 @@ _arg:
 # Geometry Data
 gdf_request:
   type: geopandas.GenericDataset
-  filepath: s3://suyana-pricing/geometries/${_arg.country}_${_arg.region}_polygons.parquet #${globals:data_path}
+  filepath: ${globals:data_path}/geometries/${_arg.country}_${_arg.region}_polygons.parquet #${globals:data_path}
   file_format: parquet
   save_args:
     compression: GZIP
+
+# Planet source data (pre-existing in S3, partitioned by location_id)
+planet_amsre:
+  type: pricing_automation.datasets_registry.ZarrPartitionedDataset
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/sources/PLANET_AMSRE_swc_<partition>.zarr
+  load_args:
+    combine: by_coords
+    parallel: true
+
+planet_amsr2:
+  type: pricing_automation.datasets_registry.ZarrPartitionedDataset
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/sources/PLANET_AMSR2_swc_<partition>.zarr
+  load_args:
+    combine: by_coords
+    parallel: true
+
+era5_gap:
+  type: pricing_automation.datasets_registry.ZarrPartitionedDataset
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/sources/ERA5_swc_<partition>.zarr
+  load_args:
+    combine: by_coords
+    parallel: true
 
 # Geometry Data:
 dict_bounds:
@@ -50,9 +72,11 @@ ds_request:
   save_args:
     consolidated: true
     mode: w
+    zarr_format: 2
   load_args:
     combine: by_coords
     parallel: true
+    drop_variables: ['expver', 'number']
 
 # Index Data
 ds_processed:
@@ -61,13 +85,14 @@ ds_processed:
   save_args:
     consolidated: true
     mode: w
+    zarr_format: 2
     append_dim: time
     chunks: {'time': -1, 'lat': -1, 'lon': -1}
     safe_chunks: false
   load_args:
     consolidated: true
 
-ds_climatology: 
+ds_climatology:
   type: pricing_automation.datasets_registry.XarrayZarrDataset
   filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/features/${_arg.provider}_${_arg.field}_climatology.zarr
   save_args:
@@ -186,14 +211,14 @@ plt_anomaly_timeseries:
 
 plt_activation_map:
   type: matplotlib.MatplotlibDataset
-  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/displays/${_arg.lead_id}/activation_map_excess_last_3.png
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/displays/${_arg.lead_id}/activation_map.png
   save_args:
     bbox_inches: tight
     dpi: 150
 
 plt_time_series:
   type: matplotlib.MatplotlibDataset
-  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/displays/${_arg.lead_id}/indices_timeseries_deficit.png
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/displays/${_arg.lead_id}/indices_timeseries.png
   save_args:
     bbox_inches: tight
     dpi: 150

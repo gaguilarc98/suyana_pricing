@@ -578,6 +578,60 @@ def get_cdf_fixed_data(
 '''
 
 #———————————————————————————————————————————
+# ASSIGN CLUSTER COORDINATE TO DATASET
+#———————————————————————————————————————————
+
+
+def create_cluster_coord(ds_orig, gdf_orig, cluster_var, method='within', check_var=None, k=6):
+    ds = ds_orig.copy()
+    gdf = gdf_orig.copy()
+
+    # Extract lon and lat from the dataset
+    lon_var, lat_var, time_var = get_coordinates(ds)
+    points = ds[[lat_var, lon_var]].to_dataframe().reset_index()
+
+    # Create a DataFrame of points
+    points = gpd.GeoDataFrame(
+        points,
+        geometry=gpd.points_from_xy(points[lon_var], points[lat_var]),
+        crs=gdf.crs
+    )
+
+    # Perform spatial join
+    if method == 'within':
+        points = gpd.sjoin(points, gdf[[cluster_var, "geometry"]], how="left", predicate="within")
+        # Assign as coordinate to the dataset
+        ds_points = points.set_index([lat_var, lon_var])[[cluster_var]]
+        ds_points = ds_points.to_xarray().set_coords(cluster_var)
+        ds = xr.merge([ds, ds_points])
+        # Create a pixel assignation dataframe
+        df_cluster = ds[[lon_var, lat_var, cluster_var]].to_dataframe()
+        df_cluster = df_cluster.reset_index().dropna(subset=[cluster_var])
+
+    elif method == 'nearest':
+        # Match nearest coordinates from grid to centroid of polygons
+        gdf['lon'] = gdf.centroid.x
+        gdf['lat'] = gdf.centroid.y
+        # Filter only valid points by checking if check_var is all null
+        if check_var:
+            valid_count = (~ds[check_var].isnull()).sum(dim=time_var)
+            # Convert the 2-D (lat, lon) DataArray to a plain DataFrame.
+            # Avoid ds[[lon_var, lat_var, 'valid_count']] because that only
+            # selects *data variables*, and lon/lat/valid_count are coordinates.
+            points = valid_count.to_dataframe(name='valid_count').reset_index()
+            points = points[points['valid_count'] != 0].copy()
+
+        df_cluster = match_grid_points(points, gdf, k=k)
+        df_cluster = df_cluster[[lon_var, lat_var, cluster_var]].copy()
+
+        ds = select_coordinates(ds, df_cluster, grid_coords=(lon_var, lat_var))
+
+    df_cluster['method'] = method
+
+    return ds, df_cluster
+
+
+#———————————————————————————————————————————
 # ADD CLIMATOLOGY TO DATASET
 #———————————————————————————————————————————
 
@@ -1283,6 +1337,12 @@ def process_data_planet(
     ds_gap = clean_data(ds_gap, date_range=period_era5)
     print(f"CDF matching done")
 
+    # Drop any scalar coordinates that ERA5 adds (e.g. 'expver') and are
+    # absent from Planet datasets — they cause xr.concat to fail.
+    extra_coords = [c for c in ds_gap.coords if c not in ds_period1.coords and c not in ds_period2.coords]
+    if extra_coords:
+        ds_gap = ds_gap.drop_vars(extra_coords)
+
     # Join and smooth the resulting time series
     ds_concat = xr.concat([ds_period1, ds_gap, ds_period2], dim='time')
     print(f"Concatenating arrays done")
@@ -1293,9 +1353,7 @@ def process_data_planet(
     ds_concat, ds_clim = get_climatology(
         ds_concat, variable, f'clim_{variable}', level='dayofyear', smooth_window=clim_smooth_window
     )
-    
-    # Compute anomalies using the added climatology
-    ds_concat[f'anom_{variable}'] = ds_concat[variable] - ds_concat[f'clim_{variable}']
+    ds_concat = add_neg_anomaly(ds_concat, 'swc_adjusted', 'climatology', keep_neg_anom=False)
     print('Climatology and anomaly successfully added')
 
     df_concat = ds_concat.to_dataframe().reset_index()
@@ -1332,12 +1390,28 @@ def process_data_request(
         - xr.Dataset with climatologies
     """
     # Read parameters from dictionary
-    variable = params['variable']
-    na_replace = params['na_replace']
-    period = params['time_window']
-    interp_resolution = params['interp_resolution']
+    variable    = params['variable']
+    na_replace  = params['na_replace']
+    period      = params['time_window']
+    interp_resolution  = params['interp_resolution']
     time_smooth_window = params['time_smooth_window']
     clim_smooth_window = params['climatology_smooth_window']
+
+    # Resolve dict-style params (Planet config) to the value that matches this dataset
+    if isinstance(variable, dict):
+        # Pick the value whose key matches a data variable in ds
+        variable = next(
+            (v for k, v in variable.items() if v in ds.data_vars),
+            list(variable.values())[0]
+        )
+    if isinstance(na_replace, dict):
+        na_replace = next(
+            (v for k, v in na_replace.items() if variable in ds.data_vars),
+            None
+        )
+    if isinstance(period, dict):
+        # Use the 'full' range when available, else first list value
+        period = period.get('full', list(period.values())[0])
     
     # Subset climate area geometry
     gdf_ca = subset_geometry(gdf, params_s)
@@ -1510,6 +1584,13 @@ def summarize_processed_data(
     mode = params_process.get('summarize_mode', 'within')
     k_neighbors = params_process.get('k_neighbors', 1)
 
+    # Resolve dict-style variable (Planet config) to the value present in dataset
+    if isinstance(variable, dict):
+        variable = next(
+            (v for v in variable.values() if v in ds_orig.data_vars),
+            list(variable.values())[0]
+        )
+
     ds = ds_orig.copy()
     # Subset climate area geometry
     LOCATION_NAME = 'location_id'
@@ -1522,13 +1603,26 @@ def summarize_processed_data(
         print(f"Nearest neighbors selection done")
 
         df_sum = ds_sum.reset_index('points').to_dataframe()
-        df_sum = df_sum.reset_index().drop(columns='points')
+        df_sum = df_sum.reset_index().drop(columns='points', errors='ignore')
+
+        # Round coordinates to avoid float-precision mismatches between
+        # df_clusters (numpy source) and df_sum (xarray reset_index source)
+        _PREC = 6
+        df_key = df_clusters[[lon, lat, LOCATION_NAME]].copy()
+        df_key[lon] = df_key[lon].round(_PREC)
+        df_key[lat] = df_key[lat].round(_PREC)
+        if lon in df_sum.columns:
+            df_sum[lon] = df_sum[lon].round(_PREC)
+        if lat in df_sum.columns:
+            df_sum[lat] = df_sum[lat].round(_PREC)
+
         # Append location var to dataframe using coordinates
-        df_sum = df_clusters[[lon, lat, LOCATION_NAME]].merge(
+        merge_on = [c for c in [lon, lat] if c in df_sum.columns]
+        df_sum = df_key.merge(
             df_sum,
             how='right',
-            on=[lon, lat]
-        ).drop(columns=[lon, lat])
+            on=merge_on
+        ).drop(columns=[lon, lat], errors='ignore')
 
         return df_sum, df_clusters
 

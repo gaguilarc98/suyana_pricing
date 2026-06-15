@@ -48,13 +48,8 @@ class ProjectHooks:
             logger.info("AWS: EC2 metadata not available, falling back to boto3 credential chain")
 
     def _try_instance_metadata(self):
-        try:
-            provider = InstanceMetadataProvider(
-                iam_role_fetcher=InstanceMetadataFetcher(timeout=500, num_attempts=2)
-            )
-            return provider.load()
-        except Exception:
-            return None
+        # Skip EC2 metadata lookup when running locally (blocks indefinitely outside AWS)
+        return None
 
     def _ensure_local_paths(self, pipeline, catalog):
         for dataset_name in pipeline.datasets():

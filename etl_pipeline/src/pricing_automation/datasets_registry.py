@@ -216,8 +216,24 @@ class ZarrPartitionedDataset(AbstractDataset):
     def _glob_pattern(self) -> str:
         return re.sub(r"<[^>]+>", "*", str(self._filepath))
 
+    def _list_stores(self) -> list:
+        """List matching zarr stores using ls+filter (more reliable than glob on S3)."""
+        pattern = self._glob_pattern()
+        parent = str(self._filepath.parent)
+        basename_pattern = re.sub(r"<[^>]+>", "*", self._filepath.name)  # e.g. 'PLANET_AMSR2_swc_*.zarr'
+        try:
+            entries = self._fs.ls(parent, detail=False)
+        except FileNotFoundError:
+            return []
+        import fnmatch
+        matches = sorted(
+            e for e in entries
+            if fnmatch.fnmatch(e.split("/")[-1], basename_pattern)
+        )
+        return matches
+
     def _load(self) -> xr.Dataset:
-        matches = sorted(self._fs.glob(self._glob_pattern()))
+        matches = self._list_stores()
         if not matches:
             raise FileNotFoundError(f"No Zarr stores matching {self._glob_pattern()}")
         stores = [self._fs.unstrip_protocol(p) for p in matches]
@@ -229,7 +245,7 @@ class ZarrPartitionedDataset(AbstractDataset):
             ds.to_zarr(store, **self._save_args)
 
     def _exists(self) -> bool:
-        return len(self._fs.glob(self._glob_pattern())) > 0
+        return len(self._list_stores()) > 0
 
 
 class DeltaLakeDataset(AbstractDataset):
@@ -278,36 +294,10 @@ class DeltaLakeDataset(AbstractDataset):
         return self._fs.unstrip_protocol(str(self._filepath))
 
     def _load(self) -> pd.DataFrame:
-        df = DeltaTable(self._full_path()).to_pandas(**self._load_args)
-        #for col in df.select_dtypes(include=["datetime64[ns, UTC]"]).columns:
-        #    df[col] = df[col].dt.tz_convert(None)
-        return df
-    
-    #def _prepare_data(self, data: pd.DataFrame) -> pd.DataFrame:
-    #    for col in data.select_dtypes(include=["datetime64[ns]"]).columns:
-    #        data[col] = data[col].dt.tz_localize("UTC")
-    #    return data
+        return DeltaTable(self._full_path()).to_pandas(**self._load_args)
 
     def _save(self, data: pd.DataFrame) -> None:
         write_deltalake(self._full_path(), data, **self._save_args)
-    '''
-    def _upsert(self, data: pd.DataFrame) -> None:
-        dt = DeltaTable(self._full_path())
-        merge_condition = " AND ".join(
-            [f"source.{k} = target.{k}" for k in self._merge_keys]
-        )
-        (
-            dt.merge(
-                source=data,
-                predicate=merge_condition,
-                source_alias="source",
-                target_alias="target",
-            )
-            .when_matched_update_all()
-            .when_not_matched_insert_all()
-            .execute()
-        )
-    '''
 
     def _exists(self) -> bool:
         try:

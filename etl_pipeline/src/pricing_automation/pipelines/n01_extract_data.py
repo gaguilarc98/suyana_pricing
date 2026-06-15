@@ -327,7 +327,23 @@ def extract_data(
     # ── Cache check ────────────────────────────────────────────────────────────
     # The catalog saves each year as:
     #   {data_path}/{country}/{lead_id}/sources/{provider}_{field}_{year}.zarr
-    # If the zarr exists and is non-empty, skip the CDS request for that year.
+    # If the zarr exists AND has actual data chunks, skip the CDS request.
+    # A valid zarr must have at least one chunk file (named without a leading '.')
+    # inside a DATA-variable sub-directory.  Coordinate-only zarrs (lat/lon/time
+    # written but the main variable never flushed) look non-empty but are all-NaN.
+
+    def _zarr_has_data_chunks(zarr_path: Path) -> bool:
+        """Return True only if at least one non-metadata file exists
+        inside any sub-directory other than pure coordinate arrays."""
+        coord_only = {'lat', 'lon', 'latitude', 'longitude', 'time', 'number', 'expver'}
+        for sub in zarr_path.iterdir():
+            if not sub.is_dir() or sub.name in coord_only:
+                continue
+            for f in sub.iterdir():
+                if f.is_file() and not f.name.startswith('.'):
+                    return True
+        return False
+
     cached: Dict[str, xr.Dataset] = {}
     missing_years: List[int] = []
 
@@ -335,10 +351,12 @@ def extract_data(
         cache_dir = Path(data_path) / country / lead_id / "sources"
         for year in all_years:
             zarr_path = cache_dir / f"{provider}_{field}_{year}.zarr"
-            if zarr_path.exists() and any(zarr_path.iterdir()):
+            if zarr_path.exists() and _zarr_has_data_chunks(zarr_path):
                 print(f"cache hit  → {year} (skipping download)")
-                cached[str(year)] = xr.open_zarr(str(zarr_path), consolidated=True)
+                cached[str(year)] = xr.open_zarr(str(zarr_path), consolidated=False, zarr_format=2)
             else:
+                if zarr_path.exists():
+                    print(f"cache miss → {year} (zarr exists but has no data chunks — re-downloading)")
                 missing_years.append(year)
     else:
         missing_years = all_years

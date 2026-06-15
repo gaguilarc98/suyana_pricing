@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(tmux capture-pane *)",
+      "Bash(tmux ls)",
+      "Bash(conda info *)",
+      "Bash(.conda/bin/pip list *)"
+    ]
+  }
+}

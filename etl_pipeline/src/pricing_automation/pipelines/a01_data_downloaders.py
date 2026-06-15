@@ -434,15 +434,17 @@ class ERA5Downloader(DataDownloader):
     ) -> Dict[str, xr.Dataset]:
         list_years = get_year_list(start_year, end_year)
         print(f"ERA5: {start_year}-{end_year} ({len(list_years)} years)")
-        
+
         dict_data = {}
-        for year in list_years:
+        for i, year in enumerate(list_years, 1):
             try:
+                print(f"downloading year {year}  ({i}/{len(list_years)})")
                 dict_data[str(year)] = self.download_year(year)
+                print(f"done {year}  ({i}/{len(list_years)})")
             except Exception as e:
                 print(f'Unable to get data for year {year}')
                 print(e)
-        
+
         return dict_data
 
 
