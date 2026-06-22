@@ -97,7 +97,7 @@ ds_climatology:
   filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/features/${_arg.provider}_${_arg.field}_climatology.zarr
   save_args:
     consolidated: true
-    mode: a
+    mode: w
     append_dim: location_id
   load_args:
     consolidated: true

@@ -16,6 +16,10 @@ params_s:
   exclude: {}
   simplify: false #true
   override_gdf: false
+  minx: -81.74
+  maxx: -66.85
+  miny: -4.23
+  maxy: 13.39
 
 # Parameters for time slice (ERA5 pipeline)
 params_t:
@@ -31,49 +35,53 @@ params_request:
   data_path: ${globals:data_path}
 
 # Parameters for processing Planet data
+#params_process:
+#  variable:
+#    planet: 'swc'
+#    era5: 'swvl1'
+#  anom_variable: 'swc_adjusted'   # column name used for anomaly: anom_swc_adjusted
+#  na_replace:
+#    planet: 65535
+#    era5: null
+#  time_window:
+#    full: ['2002-06-19', '2025-01-01']
+#    planet1: ['2002-06-19', '2011-10-04']   # AMSRE period
+#    planet2: ['2012-07-02', null]            # AMSR2 period
+#    era5:    ['2011-10-04', '2012-07-02']   # Gap-fill period
+#  subset:
+#    location_var: 'location_id'
+#  interp_resolution: 0.1
+#  fill_gap_window: 30
+#  cdf_time_window: 15
+#  time_smooth_window: 30
+#  climatology_smooth_window: 30
+
 params_process:
-  variable:
-    planet: 'swc'
-    era5: 'swvl1'
-  anom_variable: 'swc_adjusted'   # column name used for anomaly: anom_swc_adjusted
-  na_replace:
-    planet: 65535
-    era5: null
+  variable: ${_arg.field}
+  na_replace: -9999 #null
   time_window:
-    full: ['2002-06-19', '2025-01-01']
-    planet1: ['2002-06-19', '2011-10-04']   # AMSRE period
-    planet2: ['2012-07-02', null]            # AMSR2 period
-    era5:    ['2011-10-04', '2012-07-02']   # Gap-fill period
-  subset:
-    location_var: 'location_id'
-  interp_resolution: 0.1
-  fill_gap_window: 30
-  cdf_time_window: 15
-  time_smooth_window: 30
-  climatology_smooth_window: 30
+    - '2006-01-01'
+    - '2025-12-31'
+  interp_resolution: 0
+  time_smooth_window: 0
+  climatology_smooth_window: 7 #0
+  summarize_mode: 'within' #'nearest' #'within'
+  add_neg_anom: false #true
+  #threshold: -1.5
+  func: 'quantile'
+  quantiles: [0.05]
+  num_periods: 3
+  side: 'lower'
 
 # Parameters for creating triggers
-create_trigger:
-  windows:
-    1:
-      dates: ['03-15', '04-24']
-      crop: 'all'
-    2:
-      dates: ['04-25', '06-04']
-      crop: 'all'
-    3:
-      dates: ['06-05', '07-15']
-      crop: 'all'
-  variable: 'anom_swc_adjusted'
+params_indices:
+  variable: 'anom_swc' #'prcp'
   group_cols: ['location_id']
-  percentile_dict:
-    'side': 'upper'
-    'layers': {
-      90: 0.4,
-      95: 0.5,
-      99: 1.0
-    }
-  dist: 'empirical'
+  dist: 't' #'gamma'
+  start_time: '1996-01-01'
+  windows: 
+    1: ['06-01', '12-31'] #['05-20', '09-30']   # main growing season
+    #2: ['08-01', '01-31']   # second season (crosses year-end)
 
 params_contract:
   # Shared pricing defaults (override per crop or tail if needed)

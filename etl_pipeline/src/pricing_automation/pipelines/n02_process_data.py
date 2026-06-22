@@ -18,24 +18,36 @@ def _get_time_coordinate(ds):
             return name
     raise ValueError(f"No time coordinate found in dataset. Coordinates: {list(ds.sizes)}")
 
-def add_time_coordinate(ds_orig, time_dim=None, level='week'):
-    """Add time coordinate to be used for computing climatology."""
+def add_time_coordinate(ds_orig, level='week', time_dim=None, n_days=7):
+    """Add one or more climatology grouping coordinates.
+    `level` may be a single level or a list. Each is added via the original
+    single-level logic. Returns the dataset with every requested coord present.
+    """
     ds = ds_orig.copy()
-    
     if time_dim is None:
         time_dim = _get_time_coordinate(ds)
-    
-    if level == 'dayofyear':
-        ds = ds.assign_coords({level: ds[time_dim].dt.dayofyear})
-    elif level == 'week':
-        ds = ds.assign_coords({level: ds[time_dim].dt.isocalendar().week})
-    elif level == 'month':
-        ds = ds.assign_coords({level: ds[time_dim].dt.month})
-    elif level == 'year':
-        ds = ds.assign_coords({level: ds[time_dim].dt.year})
-    else:
-        raise ValueError(f"No support for level {level}")
-    
+
+    levels = [level] if isinstance(level, str) else list(level)
+    for lvl in levels:
+        if lvl == 'dayofyear':
+            ds = ds.assign_coords({lvl: ds[time_dim].dt.dayofyear})
+        elif lvl == 'week':
+            ds = ds.assign_coords({lvl: ds[time_dim].dt.isocalendar().week})
+        elif lvl == 'month':
+            ds = ds.assign_coords({lvl: ds[time_dim].dt.month})
+        elif lvl == 'day':
+            ds = ds.assign_coords({lvl: ds[time_dim].dt.day})
+        elif lvl == 'year':
+            ds = ds.assign_coords({lvl: ds[time_dim].dt.year})
+        elif lvl == 'hour':
+            ds = ds.assign_coords({lvl: ds[time_dim].dt.hour})
+        elif lvl == 'fixed_days':
+            step = int(n_days)
+            coord_name = f'fixed_days_{step}'
+            doy = ds[time_dim].dt.dayofyear
+            ds = ds.assign_coords({coord_name: ((doy - 1) // step).astype('int64')})
+        else:
+            raise ValueError(f"No support for level {lvl}")
     return ds
 
 def get_smooth_series(ds, field, smooth_window):
@@ -105,6 +117,7 @@ def clean_data(
     date_range = (None, None), 
     var: {list or str} = None,
     na_replace = None,  
+    normalize_time = True
 ):
     """Clean dataset by slicing in time and replacing missing values"""
     # Get coordinate names
@@ -122,7 +135,8 @@ def clean_data(
             raise KeyError(f"{var} must be a string or list of variable names present in the dataset.")
 
     # Convert time to datetime format
-    ds[time] = pd.to_datetime(ds[time]).normalize()# + pd.offsets.DateOffset(normalize=True)
+    if normalize_time:
+        ds[time] = pd.to_datetime(ds[time]).normalize()# + pd.offsets.DateOffset(normalize=True)
     
     # Select data within the time window
     if date_range[0] is None and date_range[1] is None:
@@ -699,6 +713,201 @@ def add_neg_anomaly(ds, field, clim_field, keep_neg_anom):
     return ds
 
 
+def _func_label(func):
+    """Label for a non-quantile reducer: mean -> 'mean', std -> 'std', etc."""
+    return str(func)
+
+
+def _quantile_label(q):
+    """0.04 -> 'p04', matching the cold-spell episode convention."""
+    return f"p{int(round(float(q) * 100)):02d}"
+
+def _get_time_coordinate(ds):
+    """Identify the time dimension name in an xarray Dataset."""
+    for name in ds.sizes.keys():
+        if ds[name].dtype.kind == 'M':  # numpy datetime64
+            return name
+    for name in ds.sizes.keys():
+        if hasattr(ds[name], 'dt'):
+            return name
+    raise ValueError(f"No time coordinate found in dataset. Coordinates: {list(ds.sizes)}")
+
+
+def add_climatology_fields(ds, ds_clim, field, var_name='climatology', level='week'):
+    """Add a precomputed climatology back to the original dataset.
+
+    `level` may be a single level name or a list of level names. Selection is
+    pointwise on the raw dataset's per-timestep level coordinates, so the
+    climatology broadcasts onto every (time, ...) cell. Works for one level
+    (e.g. 'week') or several (e.g. ['dayofyear', 'hour']).
+    """
+    levels = [level] if isinstance(level, str) else list(level)
+
+    # Pointwise selectors: one DataArray per level, all aligned on the raw
+    # dataset's time axis. Vectorized .sel matches each timestep to its
+    # (dayofyear, hour, ...) climatology value at once.
+    selectors = {lvl: ds[lvl] for lvl in levels}
+    clim_values = ds_clim[field].sel(selectors)
+
+    ds[var_name] = clim_values
+    return ds
+
+
+def get_window_values(target, targets_sorted, window, cycle_length=None):
+    """Values within +/- `window` of `target` along a cyclical axis.
+
+    Two wrap modes:
+      - cycle_length given (e.g. 365 for dayofyear, 12 for month, 24 for hour):
+        wrap in VALUE space over the full cycle. Correct even when the axis only
+        partially covers the cycle (a seasonal subset), since interior windows
+        stay in true value space and only the genuine cycle boundary wraps.
+        Values produced that aren't present in the data are simply absent from
+        the later .isin() match, which is harmless.
+      - cycle_length None: wrap over POSITIONS in the sorted unique values
+        (use when the unique values themselves form the complete cycle, e.g.
+        fixed_days bins 0..52). `window` is then in units of positions/bins.
+
+    Reproduces get_window_days exactly via cycle_length=365 for a 1-based
+    dayofyear axis.
+    """
+    targets_sorted = np.asarray(targets_sorted)
+    if cycle_length is not None:
+        # Value-space wrap. Assume 1-based for dayofyear/week/month, 0-based for
+        # hour; handle both by wrapping on the modulus and restoring the base.
+        base = int(targets_sorted.min())
+        vals = np.arange(target - window, target + window + 1)
+        wrapped = ((vals - base) % cycle_length) + base
+        return np.unique(wrapped)
+    n = len(targets_sorted)
+    pos = int(np.where(targets_sorted == target)[0][0])
+    offsets = np.arange(pos - window, pos + window + 1)
+    return targets_sorted[offsets % n]
+
+
+def get_climatology_windowed(
+    ds,
+    field,
+    var_name='climatology',
+    levels=('dayofyear', 'hour'),
+    window=7,
+    window_level=None,
+    time_dim=None,
+    func='quantile',
+    quantiles=None,
+):
+    """Windowed climatology over one or more levels, added back to the dataset.
+
+    Exactly one level is the WINDOWED axis: for each of its target values, raw
+    observations within +/- `window` of it are pooled before reducing. 
+    Args:
+        levels       : single level name or list (e.g. 'fixed_days_7' or
+                       ['dayofyear', 'hour'] or ['month', 'hour']).
+        window       : +/- half-width for the windowed axis, in that axis' units.
+        window_level : which level gets the window. Defaults to 'dayofyear' if
+                       present, else the first level.
+        func         : 'quantile' (needs `quantiles`) or mean/std/min/max/median.
+
+    Returns:
+        ds      : original dataset with the climatology variable(s) merged in.
+        ds_clim : standalone climatology indexed by the requested levels.
+    """
+    if time_dim is None:
+        time_dim = _get_time_coordinate(ds)
+
+    levels = [levels] if isinstance(levels, str) else list(levels)
+
+    if window_level is None:
+        window_level = 'dayofyear' if 'dayofyear' in levels else levels[0]
+    if window_level not in levels:
+        raise ValueError(f"window_level {window_level!r} must be one of levels {levels}.")
+
+    other_levels = [lvl for lvl in levels if lvl != window_level]
+
+    if func == 'quantile':
+        if not quantiles:
+            raise ValueError("func='quantile' requires a non-empty `quantiles` list.")
+        bad = [q for q in quantiles if not (0.0 <= float(q) <= 1.0)]
+        if bad:
+            raise ValueError(
+                f"Quantiles must be fractions in [0, 1]; got out-of-range values: {bad}. "
+                "Use 0.04 for the 4th percentile, not 4."
+            )
+
+    # Cycle length per windowed level. None -> position/bin wrap (fixed_days),
+    # 0 -> no wrap (year).
+    cycle_map = {'dayofyear': 365, 'month': 12, 'week': 52, 'hour': 24}
+    if window_level in cycle_map:
+        cycle_length = cycle_map[window_level]
+    elif window_level.startswith('fixed_days_'):
+        cycle_length = None          # position/bin wrap over unique bins
+    elif window_level == 'year':
+        cycle_length = 0             # sentinel: no wrap
+    else:
+        raise ValueError(f"Unsupported window_level {window_level!r}.")
+
+    # Add all grouping coords.
+    ds = add_time_coordinate(ds, time_dim=time_dim, level=levels)
+
+    # Whole group per chunk (quantile requirement) + eager grouper labels.
+    ds = ds.chunk({time_dim: -1}).load()
+
+    window_axis_values = ds[window_level]
+    targets = np.unique(window_axis_values.values)
+
+    def _support(target):
+        if cycle_length == 0:
+            # Linear, no wrap (year).
+            return np.arange(int(target) - window, int(target) + window + 1)
+        return get_window_values(int(target), targets, window, cycle_length=cycle_length)
+
+    def _reduce(obj):
+        """Reduce over time, grouping by other_levels exactly if any."""
+        if other_levels:
+            g = obj.groupby(other_levels[0]) if len(other_levels) == 1 else obj.groupby(other_levels)
+            if func == 'quantile':
+                return g.quantile(list(quantiles), dim=time_dim)
+            return getattr(g, func)(dim=time_dim)
+        if func == 'quantile':
+            return obj.quantile(list(quantiles), dim=time_dim)
+        return getattr(obj, func)(dim=time_dim)
+
+    pieces = []
+    for target in targets:
+        support = _support(target)
+        sub = ds[[field]].where(window_axis_values.isin(support), drop=True)
+        if sub[time_dim].size == 0:
+            continue
+        red = _reduce(sub)
+        red = red.expand_dims({window_level: [int(target)]})
+        pieces.append(red)
+
+    if not pieces:
+        raise ValueError("No data fell within any windowed target value.")
+
+    ds_clim = xr.concat(pieces, dim=window_level)
+
+    def _rechunk(dsc):
+        return dsc.chunk({dim: -1 for dim in dsc.dims})
+
+    if func == 'quantile':
+        clim_vars = {}
+        for q in quantiles:
+            name = f"{var_name}_{_quantile_label(q)}"
+            clim_vars[name] = ds_clim[field].sel(quantile=q).drop_vars('quantile')
+        ds_clim = xr.Dataset(clim_vars)
+        ds_clim = _rechunk(ds_clim)
+        for q in quantiles:
+            name = f"{var_name}_{_quantile_label(q)}"
+            ds = add_climatology_fields(ds, ds_clim, name, var_name=name, level=levels)
+    else:
+        out_name = f"{var_name}_{_func_label(func)}"
+        ds_clim = ds_clim.rename({field: out_name})
+        ds_clim = _rechunk(ds_clim)
+        ds = add_climatology_fields(ds, ds_clim, out_name, var_name=out_name, level=levels)
+
+    return ds, ds_clim
+
+
 #———————————————————————————————————————————
 # COMPUTE EVENTS FROM DATASET
 #———————————————————————————————————————————
@@ -741,6 +950,83 @@ def add_normalized_variable(ds, field, clim_field, std_field, var_name):
         ds[std_field]>0, (ds[field] - ds[clim_field])/ds[std_field], np.nan
     )
     
+    return ds
+
+
+def cumulative_flag_counts(flag, dim="time"):
+    """Count consecutive runs of 1s along `dim`, resetting to 0 when flag=0.
+    Works with Dask-backed arrays.
+    """
+    cs = flag.cumsum(dim)
+    base = cs.where(flag == 0).ffill(dim).fillna(0)
+    runs = (cs - base) * flag
+    return runs.astype("int32")
+
+
+def cumulative_flag_values(values, flag, dim="time"):
+    """Running sum of `values` within consecutive 1-runs of `flag` along `dim`.
+
+    Same reset logic as cumulative_flag_runs, but accumulates `values` instead
+    of counting. Resets to 0 when flag=0, so each episode accumulates from its
+    own start. Pass values = intensity to get cumulative cold/heat degree-hours
+    within the current episode. Dask-friendly.
+    """
+    contrib = values * flag
+    cs = contrib.cumsum(dim)
+    base = cs.where(flag == 0).ffill(dim).fillna(0)
+    return (cs - base) * flag
+
+
+def get_extreme_episodes(
+    ds,
+    field,
+    threshold_field,
+    var_name='cold_spell',
+    num_periods=2,
+    side='lower',
+    time_dim=None,
+):
+    """Flag below/above-threshold cells, count consecutive runs, measure intensity.
+
+    Compares each cell of `field` against the per-cell, per-timestep threshold in
+    `threshold_field` (e.g. the '{var}_p04' climatology merged onto ds by
+    get_climatology_windowed), so every cell is judged against its own percentile.
+
+    Adds:
+        flag_{var_name}      : 1 where below (lower)/above (upper) threshold.
+        n_{var_name}         : consecutive run length along time, reset on flag=0.
+        intensity_{var_name} : threshold-obs (lower)/obs-threshold (upper),
+                               clipped at 0. Per-cell cold/heat depth.
+        {var_name}           : 1 where the run length reaches num_periods.
+
+    Returns ds with the columns added.
+    """
+    if time_dim is None:
+        time_dim = _get_time_coordinate(ds)
+
+    obs = ds[field]
+    thr = ds[threshold_field]
+
+    flag_name = f'flag_{var_name}'
+    count_name = f'n_{var_name}'
+    intensity_name = f'intensity_{var_name}'
+
+    if side == 'lower':
+        ds[flag_name] = xr.where(obs <= thr, 1, 0)
+        ds[intensity_name] = (thr - obs).clip(min=0)
+    elif side == 'upper':
+        ds[flag_name] = xr.where(obs >= thr, 1, 0)
+        ds[intensity_name] = (obs - thr).clip(min=0)
+    else:
+        raise ValueError(f"side must be 'lower' or 'upper', got {side!r}")
+
+    ds[count_name] = cumulative_flag_counts(ds[flag_name], dim=time_dim)
+
+    cdh_name = f'cum_intensity_{var_name}'
+    ds[cdh_name] = cumulative_flag_values(ds[intensity_name], ds[flag_name], dim=time_dim)
+
+    ds[var_name] = xr.where(ds[count_name] == num_periods, 1, 0)
+
     return ds
 
 
@@ -1536,6 +1822,89 @@ def process_data_temp(
     return ds_process, ds_clim
 
 
+def process_data_coldspell(
+    ds: xr.Dataset,
+    gdf: gpd.GeoDataFrame,
+    params: dict,
+    params_s: dict,
+) -> xr.Dataset:
+    """Subset, slice, regrid, rename and clean the dataset.
+
+    This is the innocuous front half of process_data_request: geometry subset,
+    drop of singleton coords, spatial slice, optional regrid, variable rename,
+    and time/NA cleaning. It does not smooth or compute climatologies. The
+    returned Dataset carries a single data variable named `variable`, on
+    lat/lon/time coordinates.
+    """
+    variable = params["variable"]
+    na_replace = params.get("na_replace", None)
+    period = params.get("time_window", (None, None))
+
+    interp_resolution = params.get('interp_resolution', 0)
+    time_smooth_window = params.get('time_smooth_window', 0)
+    clim_smooth_window = params.get('climatology_smooth_window', 0)
+
+    func = params.get('func', 'mean')
+    quantiles = params.get('quantiles', [0.05])
+    #threshold = params.get('threshold',)
+    num_periods = params.get('num_periods', 4)
+    side = params.get('side', 'lower')
+
+
+    # Subset climate area geometry.
+    gdf_ca = subset_geometry(gdf, params_s)
+    gdf_ca = gdf_ca.to_crs(epsg="4326")
+
+    # Remove unnecessary singleton coordinates, keeping lon/lat/time.
+    keep_coords = list(get_coordinates(ds))
+    ds = drop_single_coords(ds, except_coords=keep_coords)
+
+    # Slice to the geometry envelope.
+    ds_slice = slice_dataset_w_geometry(ds, gdf_ca)
+
+    # Optional regrid (res=0 is a no-op and returns the dataset unchanged).
+    ds_slice = regrid_dataset(ds_slice, method="linear", res=interp_resolution)
+
+    # Rename to uniform lon/lat/time and the canonical variable name.
+    ds_slice = rename_vars(ds_slice, variable)
+    ds_slice = ds_slice[[variable]]
+    print("Renaming variables done")
+
+    # Smooth time series given the smooth window
+    if time_smooth_window > 0:
+        ds_clean = ds_clean.rename({variable: f'{variable}_orig'})
+        ds_clean[variable] = get_smooth_series(ds_clean, f'{variable}_orig', time_smooth_window)
+
+    # Time slice + NA replacement.
+    ds_clean = clean_data(ds_slice, date_range=period, var=variable, na_replace=na_replace, normalize_time=False)
+    print("Cleaning done")
+
+    # Get climatology statistics    
+    ds_process, ds_clim = get_climatology_windowed(
+        ds_clean,
+        variable,
+        var_name='perc',
+        levels=('dayofyear','hour'), 
+        window_level='dayofyear',
+        window=clim_smooth_window, 
+        func=func, 
+        quantiles=quantiles,
+    )
+    print(f"Climatology statistics computed")
+    # Get extreme episodes
+    ds_process = get_extreme_episodes(
+        ds_process,
+        variable,
+        'perc_p05',
+        var_name='cold_spell',
+        num_periods=num_periods,
+        side=side,
+    )
+    print(f"Extreme events computed")
+
+    return ds_process, ds_clim
+
+
 def process_data(
     ds : xr.Dataset,
     gdf : gpd.GeoDataFrame,
@@ -1545,7 +1914,7 @@ def process_data(
     PERIL_PROCESS = {
         'swc': process_data_request,
         'prcp': process_data_request,
-        'tmin': process_data_temp,
+        'tmin': process_data_coldspell,
         'tmax': process_data_temp,
     }
 
