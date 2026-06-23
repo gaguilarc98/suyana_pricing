@@ -32,7 +32,7 @@ def extract_pipeline(**kwargs) -> Pipeline:
             func = process_data,
             inputs = ['ds_request', 'gdf_aoi', 'params:params_process', 'params:params_s'],
             outputs = ['ds_processed', 'ds_climatology'],
-            name = 'process',
+            name = 'process_data',
             tags = ['process']
         ),
         node(

@@ -266,10 +266,110 @@ def _layered_payout(p, levels, tail='lower'):
         raise ValueError("tail must be 'lower' or 'upper'")
  
     return payout
- 
- 
+
+
+########____GENERATE OUTPUT____########
+
+
+def generate_triggers(
+    df_hist: pd.DataFrame,
+    params: dict,
+    params_request: dict,
+):
+    """
+    Generate triggers
+    Args:
+        - df_hist : (pd.DataFrame) DataFrame with historical dataset of indices
+        - params : (dict) Dictionary with parameters to compute triggers
+    Returns:
+        - pd.DataFrame DataFrame with percentiles, triggers and activation flags
+        - pd.DataFrame Original DataFrame
+    """
+    windows = params['windows']
+    variable = params['variable']
+    group_cols = params.get('group_cols', 'location_id')
+
+    # If the configured variable doesn't exist in the dataframe, fall back to
+    # the first anom_* column (handles ERA5 vs Planet naming differences)
+    if variable not in df_hist.columns:
+        anom_cols = [c for c in df_hist.columns if c.startswith('anom_')]
+        if anom_cols:
+            import logging
+            logging.getLogger(__name__).warning(
+                f"create_trigger variable '{variable}' not found in dataframe; "
+                f"using '{anom_cols[0]}' instead."
+            )
+            variable = anom_cols[0]
+    percentile_dict = params['percentile_dict']
+    dist = params['dist']
+
+    if params_request.get('lead_id', None) is not None:
+        df_hist['lead_id'] = params_request['lead_id']
+        group_cols.append('lead_id')
+
+    df_hist['time'] = pd.to_datetime(df_hist['time'])
+
+    # Accumulate the values of the variable within the specified windows
+    SUM_VARIABLE = 'index_value'
+    df_cum_variable = generate_accumulated_anomalies(
+        df_hist,
+        window=windows,
+        group_cols=group_cols,
+        variable_name=variable,
+        set_variable=SUM_VARIABLE
+    )
+
+    groups = group_cols + ['crop', 'window']
+
+    if dist == 'empirical':
+        df_cum_variable, df_percentiles = get_empirical_percentiles(
+            df_cum_variable,
+            groups,
+            SUM_VARIABLE,
+            percentile_dict
+        )
+
+    else:
+        # Fit distribution and get parameters
+        df_fit = fit_distribution(
+            df_cum_variable,
+            groups,
+            SUM_VARIABLE,
+            dist
+        )
+        # Add the associated percentile values for each window
+        df_cum_variable = add_percentiles_from_params(
+            df_cum_variable,
+            df_fit,
+            groups,
+            SUM_VARIABLE
+        )
+        # Calculate trigger for each percentile value only with complete window
+        df_percentiles = calculate_triggers_from_params(
+            df_fit,
+            percentile_dict,
+            groups
+        )
+
+    # Get flags for activated windows
+    df_cum_variable = get_activation_years(
+        df_cum_variable,
+        df_percentiles,
+        groups,
+        SUM_VARIABLE,
+        percentile_dict,
+    )
+
+    df_cum_variable['empirical_loss'] = compute_layered_payout(
+        df_cum_variable['percentile'],
+        percentile_dict
+    )
+
+    return df_cum_variable, df_percentiles
+
+
 # ---- contract validation ----
- 
+
 def _validate_tail(tail_spec, crop_name, window_key, tail_label,
                    parent_coverage, parent_iv, parent_tlr, parent_ded):
     """Validate and normalise a tail spec. Fills defaults from parent values.
@@ -486,7 +586,10 @@ def compute_payout_schedule(df_cum, group_cols, params_contract):
         df = df_cum.copy()
  
     df['_pct100'] = df['percentile'] * 100
-    base_cols     = group_cols + ['window_year', 'index_value', 'percentile', '_pct100']
+    base_cols     = group_cols + [
+        'window_year', 'start_date', 'end_date',
+        'index_value', 'index_desc', 'percentile', '_pct100'
+    ]
     df_base       = df[base_cols].copy()
  
     chunks = []
@@ -600,7 +703,8 @@ def compute_payout_schedule(df_cum, group_cols, params_contract):
     df_payouts = df_payouts.drop(columns=['_pct100'])
  
     non_group = ['crop', 'window_year', 'tail', 'design',
-                 'index_value', 'percentile', 'perc_payout',
+                 'start_date', 'end_date',
+                 'index_value', 'index_desc', 'percentile', 'perc_payout',
                  'pure_premium_pct', 'target_loss_ratio', 're_premium_pct',
                  'deductions', 'gross_premium_pct',
                  'coverage', 'insured_value',

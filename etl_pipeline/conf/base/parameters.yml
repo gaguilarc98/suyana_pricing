@@ -2,59 +2,80 @@
 _arg:
   country: ${runtime_params:country, ${globals:country}}
   region: ${runtime_params:region, ${globals:region}}
-  lead_id: ${runtime_params:lead_id, 'test1'}
+  lead_id: ${runtime_params:lead_id, 'valles'}
   loc_id: ${runtime_params:loc_id, 'ID-001'}
   provider: ${runtime_params:provider, ${globals:provider}}
   field: ${runtime_params:field, ${globals:field}}
   start_year: ${runtime_params:start_year, 1996}
   end_year: ${runtime_params:end_year, 2025}
 
-# ERA5
 # Parameters for aoi bounding box
 params_s:
-  include: {
-    'aoa': ['Selected'], 
-    'municipio': ['Mizque','Quillacollo', 'Colomi', 'Tarija', 'Yapacani', 'Puerto Villarroel', 'Chimoré']
-  }
+  include:
+    municipio: ['Mizque', 'Quillacollo', 'Colomi', 'Tarija']
   exclude: {}
-  simplify: true
+  simplify: false #true
   override_gdf: false
   minx: -81.74
   maxx: -66.85
   miny: -4.23
   maxy: 13.39
 
-# Parameters for time slice
+# Parameters for time slice (ERA5 pipeline)
 params_t:
   start_year: ${_arg.start_year}
   end_year: ${_arg.end_year}
 
-# Parameters for data retrieval from ERA5
+# Parameters for data retrieval
 params_request:
   country: ${_arg.country}
   lead_id: ${_arg.lead_id}
   provider: ${_arg.provider}
   field: ${_arg.field}
   data_path: ${globals:data_path}
-      
 
-# Parameters for processing downloaded data
+# Parameters for processing Planet data
+#params_process:
+#  variable:
+#    planet: 'swc'
+#    era5: 'swvl1'
+#  anom_variable: 'swc_adjusted'   # column name used for anomaly: anom_swc_adjusted
+#  na_replace:
+#    planet: 65535
+#    era5: null
+#  time_window:
+#    full: ['2002-06-19', '2025-01-01']
+#    planet1: ['2002-06-19', '2011-10-04']   # AMSRE period
+#    planet2: ['2012-07-02', null]            # AMSR2 period
+#    era5:    ['2011-10-04', '2012-07-02']   # Gap-fill period
+#  subset:
+#    location_var: 'location_id'
+#  interp_resolution: 0.1
+#  fill_gap_window: 30
+#  cdf_time_window: 15
+#  time_smooth_window: 30
+#  climatology_smooth_window: 30
+
 params_process:
   variable: ${_arg.field}
-  na_replace: null
+  na_replace: -9999 #null
+  offset: 0
   time_window:
     - '2006-01-01'
     - '2025-12-31'
   interp_resolution: 0
   time_smooth_window: 0
-  climatology_smooth_window: 0
+  climatology_smooth_window: 7 #0
   summarize_mode: 'within' #'nearest' #'within'
   add_neg_anom: false #true
-  threshold: -1.5
-  num_days: 2
-  side: 'lower'
   
-# Parameters for creating indices
+  func: 'quantile'
+  quantiles: [0.05]
+  pixel_window: 3
+  num_periods: 3
+  side: 'lower'
+
+# Parameters for creating triggers
 params_indices:
   variable: 'anom_swc' #'prcp'
   group_cols: ['location_id']
@@ -66,24 +87,32 @@ params_indices:
 
 params_contract:
   # Shared pricing defaults (override per crop or tail if needed)
-  target_loss_ratio: 0.74 #0.65
-  deductions: 0.175 #0.10
+  target_loss_ratio: 0.74 #0.65 #
+  deductions: 0.175 #0.10 #
   # Uniform fallbacks -- used when not set at crop or tail level
-  coverage: 1 #0.14
-  insured_value: 300 #7_200_000
+  coverage: 1 #0.14 #
+  insured_value: 300 #7_200_000 #
   crops: 
     all: 
       # Monitors both deficit in lower and excess in upper
       windows: 
           1:
-            lower: 
-              # Deficit rainfall: continuous ramp from p10 to p1
-              'design': 'layered' #'continuous'
-              'levels': {20: 0.30, 10: 0.4, 5: 0.5} #[10, 1]
-              # inherits coverage=0.14, insured_value=7_200_000 from top level
-            #upper: 
-            #  design: 'continuous'
-            #  levels: [90, 99]
+            #lower: 
+            #  # Deficit rainfall: continuous ramp from p10 to p1
+            #  'design': 'continuous' #'layered' #
+            #  'levels': [10, 1] #{20: 0.30, 10: 0.4, 5: 0.5} #
+            #  # inherits coverage=0.14, insured_value=7_200_000 from top level
+            upper: 
+              design: 'layered' #'continuous' #
+              levels: {80: 0.30, 90: 0.4, 95: 0.5} #[90, 99] #
+          2:
+            upper: 
+              design: 'layered' #'continuous' #
+              levels: {80: 0.30, 90: 0.4, 95: 0.5} #[90, 99] #
+          #3:
+          #  upper:
+          #    design: 'layered' #'continuous' #
+          #    levels: {80: 0.30, 90: 0.4, 95: 0.5}
 
 # Parameters for boostrap analysis
 params_bootstrap:
@@ -92,28 +121,29 @@ params_bootstrap:
   loss_usd: 1
 
 params_quote:
-  loading_factor: 1.5  # Multiplier applied to AAL or AAL + std_dev
+  loading_factor: 1.5
   margin: 0.20
 
 
 # Viz parameters
 params_map:
-  window: 1
-  crop: all
-  tail: lower
-  season_name: Winter season # custom
-  start_year: 2003   # optional
+  include : {
+    'window': [1, 2],
+    'tail': ['upper']
+  }
+  title: Activaciones Promedio — Verano e Invierno — Exceso y Déficit # custom
+  start_year: 2014   # optional
 
 params_series:
-  id_location:   ID-081-00
-  id_name:       ID-081-00
+  id_location:   ID-0196 #ID-102-01 #ID-0196
+  id_name:       ID-0196 #ID-102-01 #ID-0196
   window:        1
   crop:          all
   tail:          lower
-  season_name:   Winter season
+  season_name:   05-01 to 09-30 (deficit)
   start_time:    2003-01-01
   variable:      ${_arg.field}
-  clim_variable: clim_swc
-  anom_variable: anom_swc
-  cum_variable:  anom_swc
+  clim_variable: clim_prcp #clim_swc #
+  anom_variable: anom_prcp #anom_swc #
+  cum_variable:  prcp #anom_swc #
 

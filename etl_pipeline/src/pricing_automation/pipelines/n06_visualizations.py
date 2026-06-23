@@ -28,13 +28,39 @@ from scipy import stats
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _period_label(params_process: dict) -> str:
-    t0 = pd.to_datetime(params_process["time_window"][0]).year
-    t1 = pd.to_datetime(params_process["time_window"][1]).year
+    tw = params_process["time_window"]
+    if isinstance(tw, dict):
+        t0 = pd.to_datetime(tw["full"][0]).year
+        t1 = pd.to_datetime(tw["full"][1]).year
+    else:
+        t0 = pd.to_datetime(tw[0]).year
+        t1 = pd.to_datetime(tw[1]).year
     return f"{t0}–{t1}"
 
 
-def _anom_var(params_process: dict) -> str:
-    return f"anom_{params_process['variable']}"
+def _anom_var(params_process: dict, ds=None) -> str:
+    """Return the anomaly variable name, auto-detecting from dataset if needed."""
+    variable = params_process.get("variable")
+    # Planet-style: variable is a dict → use the explicit anom_variable key
+    if isinstance(variable, dict):
+        anom_v = params_process.get("anom_variable", "swc_adjusted")
+        candidate = f"anom_{anom_v}"
+    else:
+        candidate = f"anom_{variable}"
+    # If the candidate doesn't exist in the dataset, fall back to first anom_* var
+    if ds is not None and candidate not in ds.data_vars:
+        anom_vars = [v for v in ds.data_vars if str(v).startswith("anom_")]
+        if anom_vars:
+            candidate = str(anom_vars[0])
+    return candidate
+
+
+def _time_window(params_process: dict):
+    """Return (t0, t1) regardless of ERA5-list or Planet-dict layout."""
+    tw = params_process["time_window"]
+    if isinstance(tw, dict):
+        return tw["full"][0], tw["full"][1]
+    return tw[0], tw[1]
 
 
 def _da_to_gdf(da: xr.DataArray) -> gpd.GeoDataFrame:
@@ -69,9 +95,9 @@ def plot_variability_map(
     ------
     matplotlib Figure
     """
-    var = _anom_var(params_process)
+    var = _anom_var(params_process, ds_processed)  # type: ignore[name-defined]  # ds_processed is in scope here
     period = _period_label(params_process)
-    t0, t1 = params_process["time_window"]
+    t0, t1 = _time_window(params_process)
 
     # Annual mean per pixel, then std across years
     da_annual = ds_processed[var].sel(time=slice(t0, t1)).resample(time="1YE").mean()
@@ -89,13 +115,12 @@ def plot_variability_map(
 
     gdf_aoi.boundary.plot(ax=ax, linewidth=0.4, color="#555555", zorder=3)
 
-    ax.set_title(
-        f"SWC Inter-annual Variability · {period}",
-        fontsize=13, fontweight="bold", pad=10,
-    )
+    ax.set_title(f"SWC Inter-annual Variability · {period}", fontsize=13, loc="left", pad=10)
     ax.set_xlabel("Longitude", fontsize=10)
     ax.set_ylabel("Latitude", fontsize=10)
     ax.tick_params(labelsize=8)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
     plt.tight_layout()
     plt.close(fig)
     return fig
@@ -152,9 +177,10 @@ def plot_trend_map(
     Full-period linear trend per pixel with contextily basemap.
     Units: variable / decade. Positive = drying; negative = wetting.
     """
-    var = _anom_var(params_process)
-    t0 = pd.to_datetime(params_process["time_window"][0])
-    t1 = pd.to_datetime(params_process["time_window"][1])
+    var = _anom_var(params_process, ds_processed)
+    _t0, _t1 = _time_window(params_process)
+    t0 = pd.to_datetime(_t0)
+    t1 = pd.to_datetime(_t1)
 
     da = ds_processed[var].sel(time=slice(str(t0.date()), str(t1.date())))
     trend = _compute_trend_da(da)
@@ -179,7 +205,7 @@ def plot_trend_map(
     cb.set_label(f"Trend  [{params_process['variable']} / decade]", fontsize=10)
     cb.ax.axhline(0, color="white", linewidth=1.5)
 
-    ax.set_title(f"SWC Trend · {t0.year}–{t1.year}", fontsize=13, fontweight="bold")
+    ax.set_title(f"SWC Trend · {t0.year}–{t1.year}", fontsize=13, loc="left")
     ax.set_axis_off()
     plt.tight_layout()
     plt.close(fig)
@@ -249,15 +275,12 @@ def plot_trigger_frequency_map(
         },
     )
 
-    ax.set_title(
-        "Trigger Activation Frequency by Location",
-        fontsize=13,
-        fontweight="bold",
-        pad=10,
-    )
+    ax.set_title("Trigger Activation Frequency by Location", fontsize=13, loc="left", pad=10)
     ax.set_xlabel("Longitude", fontsize=10)
     ax.set_ylabel("Latitude", fontsize=10)
     ax.tick_params(labelsize=8)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
     plt.tight_layout()
     plt.close(fig)
     return fig
@@ -285,7 +308,11 @@ def plot_anomaly_timeseries(
     ------
     matplotlib Figure
     """
+    # df_cluster is a DataFrame — detect anomaly column from it directly
+    anom_cols = [c for c in df_cluster.columns if str(c).startswith("anom_")]
     var = _anom_var(params_process)
+    if var not in df_cluster.columns and anom_cols:
+        var = anom_cols[0]
     period = _period_label(params_process)
 
     if var not in df_cluster.columns:
@@ -294,8 +321,8 @@ def plot_anomaly_timeseries(
     df = df_cluster.copy()
     df["time"] = pd.to_datetime(df["time"])
 
-    t0, t1 = params_process["time_window"]
-    df = df[(df["time"] >= t0) & (df["time"] <= t1)]
+    t0, t1 = _time_window(params_process)
+    df = df[(df["time"] >= t0) & (df["time"] <= (t1 or df["time"].max()))]
 
     # Annual portfolio mean
     annual = (
@@ -329,13 +356,11 @@ def plot_anomaly_timeseries(
 
     ax.set_xlabel("Year", fontsize=11)
     ax.set_ylabel(f"Mean anomaly  [{params_process['variable']}]", fontsize=11)
-    ax.set_title(
-        f"Annual Mean Anomaly — Portfolio · {period}",
-        fontsize=13,
-        fontweight="bold",
-    )
-    ax.legend(fontsize=10)
+    ax.set_title(f"Annual Mean Anomaly — Portfolio · {period}", fontsize=13, loc="left")
+    ax.legend(fontsize=10, frameon=False)
     ax.grid(axis="y", alpha=0.3)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
     ax.set_xlim(x.min() - 0.5, x.max() + 0.5)
     ax.xaxis.set_major_locator(mticker.MultipleLocator(5))
     ax.xaxis.set_minor_locator(mticker.MultipleLocator(1))
@@ -361,20 +386,16 @@ def create_activation_map(
     params_map keys: window, crop, tail, season_name,
                      start_year (optional), location_var (optional).
     """
-    window      = params_map['window']
-    crop        = params_map['crop']
-    tail        = params_map['tail']
-    season_name = params_map['season_name']
+    title = params_map.get('title', 'Activation map -- | window | tail')
     location_var = params_s.get('location_var', 'location_id')
  
     gdf = subset_geometry(gdf, params_s)
     gdf = gdf.to_crs(epsg='4326')
  
-    df = df_payouts[
-        (df_payouts['window'] == window) &
-        (df_payouts['crop']   == crop)   &
-        (df_payouts['tail']   == tail)
-    ].copy()
+    df = subset_geometry(df_payouts, params_map)
+
+    data_max = df['perc_payout'].max()  # or masked.max() to ignore zeros
+    vmax = data_max if data_max > 0 else 1.0
  
     if 'start_year' in params_map:
         df = df[df['window_year'] >= params_map['start_year']].copy()
@@ -384,7 +405,7 @@ def create_activation_map(
     # Max perc_payout per (location, year) in case of duplicates
     df = (
         df.groupby([location_var, 'window_year'])['perc_payout']
-        .max()
+        .mean()
         .reset_index()
     )
  
@@ -392,7 +413,6 @@ def create_activation_map(
  
     # Colormap: midnightblue for zero, green->red for non-zero
     cmap_grad = LinearSegmentedColormap.from_list('payout', ['darkgreen', 'gold', 'crimson'])
-    vmax      = df['perc_payout'].max()
  
     def plot_year(ax_i, gdf_year):
         """Plot a single year, splitting zero and non-zero payout polygons."""
@@ -414,8 +434,14 @@ def create_activation_map(
     list_years = sorted(gdf_season['window_year'].dropna().unique().astype(int))
     n_years    = len(list_years)
  
-    if n_years <= 15:
-        fig, ax = plt.subplots(3, 5, figsize=(18, 14.5))
+    if n_years <= 5:
+        fig, ax = plt.subplots(1, n_years, figsize=(5*n_years, 6))
+        years = np.arange(min(list_years), max(list_years)+1, 1)
+    elif n_years <= 10:
+        fig, ax = plt.subplots(2, 5, figsize=(14, 6.5))
+        years = np.arange(min(list_years), max(list_years)+1, 1)
+    elif n_years <= 15:
+        fig, ax = plt.subplots(3, 5, figsize=(18, 8.5))
         years = np.arange(min(list_years), min(list_years) + 15, 1)
     elif n_years <= 20:
         fig, ax = plt.subplots(4, 5, figsize=(24, 14.5))
@@ -437,7 +463,7 @@ def create_activation_map(
  
         plot_year(ax[i], gdf_year)
  
-        ax[i].set_aspect('auto')# 'equal', 'auto'
+        ax[i].set_aspect('equal')# 'equal', 'auto'
         ax[i].xaxis.set_major_formatter(FuncFormatter(format_longitude))
         ax[i].yaxis.set_major_formatter(FuncFormatter(format_latitude))
         ax[i].tick_params(axis='x', labelcolor='gray', labelsize=7, rotation=0)
@@ -452,8 +478,8 @@ def create_activation_map(
     cbar.set_label('Payout fraction', size=10)
  
     plt.suptitle(
-        f"Activation map -- {season_name} | window {window} | {crop} | {tail} tail",
-        fontsize=14, y=0.94
+        title,
+        fontsize=14, y=0.96
     )
     #plt.tight_layout()
     plt.close(fig)
