@@ -977,38 +977,29 @@ def cumulative_flag_values(values, flag, dim="time"):
     return (cs - base) * flag
 
 
-def get_extreme_episodes(
+
+def flag_and_intensity(
     ds,
     field,
     threshold_field,
     var_name='cold_spell',
-    num_periods=2,
     side='lower',
-    time_dim=None,
+    hard_threshold=None,
 ):
-    """Flag below/above-threshold cells, count consecutive runs, measure intensity.
-
-    Compares each cell of `field` against the per-cell, per-timestep threshold in
-    `threshold_field` (e.g. the '{var}_p04' climatology merged onto ds by
-    get_climatology_windowed), so every cell is judged against its own percentile.
-
-    Adds:
-        flag_{var_name}      : 1 where below (lower)/above (upper) threshold.
-        n_{var_name}         : consecutive run length along time, reset on flag=0.
-        intensity_{var_name} : threshold-obs (lower)/obs-threshold (upper),
-                               clipped at 0. Per-cell cold/heat depth.
-        {var_name}           : 1 where the run length reaches num_periods.
-
-    Returns ds with the columns added.
+    """Flag extreme cells and measure their intensity against a per-cell threshold.
+    Args:
+        ds: Dataset containing `field` and `threshold_field`.
+        field: Name of the observation variable.
+        threshold_field: Name of the per-cell threshold variable.
+        var_name: Base name for the output variables.
+        side: 'lower' flags obs <= threshold, 'upper' flags obs >= threshold.
+    Returns:
+        ds with flag_{var_name} and intensity_{var_name} added.
     """
-    if time_dim is None:
-        time_dim = _get_time_coordinate(ds)
-
     obs = ds[field]
     thr = ds[threshold_field]
 
     flag_name = f'flag_{var_name}'
-    count_name = f'n_{var_name}'
     intensity_name = f'intensity_{var_name}'
 
     if side == 'lower':
@@ -1020,14 +1011,149 @@ def get_extreme_episodes(
     else:
         raise ValueError(f"side must be 'lower' or 'upper', got {side!r}")
 
-    ds[count_name] = cumulative_flag_counts(ds[flag_name], dim=time_dim)
+    return ds
 
-    cdh_name = f'cum_intensity_{var_name}'
-    ds[cdh_name] = cumulative_flag_values(ds[intensity_name], ds[flag_name], dim=time_dim)
 
-    ds[var_name] = xr.where(ds[count_name] == num_periods, 1, 0)
+def flag_and_intensity(
+    ds,
+    field,
+    threshold_field,
+    var_name='cold_spell',
+    side='lower',
+    hard_threshold=None,
+):
+    """Flag extreme cells and measure their intensity against a per-cell threshold.
+    Args:
+        ds: Dataset containing `field` and `threshold_field`.
+        field: Name of the observation variable.
+        threshold_field: Name of the per-cell threshold variable.
+        var_name: Base name for the output variables.
+        side: 'lower' flags obs <= threshold, 'upper' flags obs >= threshold.
+        hard_threshold: Optional absolute cutoff.
+    Returns:
+        ds with flag_{var_name} and intensity_{var_name} added.
+    """
+    obs = ds[field]
+    thr = ds[threshold_field]
+
+    flag_name = f'flag_{var_name}'
+    intensity_name = f'intensity_{var_name}'
+
+    if side == 'lower':
+        cond = obs <= thr
+        if hard_threshold is not None:
+            cond = cond & (obs <= hard_threshold)
+        depth = (thr - obs).clip(min=0)
+    elif side == 'upper':
+        cond = obs >= thr
+        if hard_threshold is not None:
+            cond = cond & (obs >= hard_threshold)
+        depth = (obs - thr).clip(min=0)
+    else:
+        raise ValueError(f"side must be 'lower' or 'upper', got {side!r}")
+
+    ds[flag_name] = xr.where(cond, 1, 0)
+    ds[intensity_name] = depth.where(cond, 0)
 
     return ds
+
+
+def get_extreme_episodes(
+    ds,
+    flag_field,
+    intensity_field,
+    var_name='cold_spell',
+    #num_periods=2,
+    time_dim=None,
+):
+    """Accumulate consecutive runs and intensity from precomputed flag/intensity.
+    Args:
+        ds: Dataset containing `flag_field` and `intensity_field`.
+        flag_field: Name of the precomputed 1/0 flag variable.
+        intensity_field: Name of the precomputed intensity variable.
+        var_name: Base name for the output variables.
+        num_periods: Run length at which an episode is marked.
+        time_dim: Time dimension name; inferred if None.
+    Returns:
+        ds with n_, cum_intensity_, and {var_name} added.
+    """
+    if time_dim is None:
+        time_dim = _get_time_coordinate(ds)
+
+    flag = ds[flag_field]
+    intensity = ds[intensity_field]
+
+    count_name = f'n_{var_name}'
+    cdh_name = f'cum_intensity_{var_name}'
+
+    ds[count_name] = cumulative_flag_counts(flag, dim=time_dim)
+    ds[cdh_name] = cumulative_flag_values(intensity, flag, dim=time_dim)
+    #ds[var_name] = xr.where(ds[count_name] == num_periods, 1, 0)
+
+    return ds
+
+
+#———————————————————————————————————————————
+# SPATIAL VALIDATION
+#———————————————————————————————————————————
+
+def spatial_smooth(da: xr.DataArray, pixel_window: int = 5,
+                   lat_dim: str = 'lat', lon_dim: str = 'lon') -> xr.DataArray:
+    """
+    Apply spatial moving-average smoothing over lat/lon only.
+    Args:
+        da: Input DataArray.
+        pixel_window: Size of the moving window along each spatial axis.
+        lat_dim, lon_dim: Names of the spatial dimensions to smooth.
+    Returns:
+        Smoothed DataArray with the same coords and dims as the input.
+    """
+    lon, lat, time = get_coordinates(da)
+    lon_dim =  lon if lon is not None else lon_dim
+    lat_dim =  lat if lat is not None else lat_dim
+    sizes = tuple(pixel_window if d in (lat_dim, lon_dim) else 1
+                  for d in da.dims)
+
+    #smoothed = uniform_filter(da.values, size=sizes, mode='nearest')
+    smoothed = da.rolling({lon_dim: pixel_window, lat_dim: pixel_window}, center=True, min_periods=1).sum()
+
+    return xr.DataArray(smoothed, coords=da.coords, dims=da.dims,
+                        name=f'{da.name}_smooth_{pixel_window}')
+
+def spatial_rolling_stat(
+    da: xr.DataArray, 
+    pixel_window: int = 5,
+    stat: str = 'mean',
+    lat_dim: str = 'lat', 
+    lon_dim: str = 'lon',
+    min_periods: int = 1
+) -> xr.DataArray:
+    """
+    Apply a spatial rolling-window statistic over lat/lon only.
+    Args:
+        da: Input DataArray.
+        window_size: Size of the moving window along each spatial axis.
+        stat: Name of the rolling reducer to apply ('mean', 'sum', 'std',
+            'median', 'max', 'min', etc.).
+        lat_dim, lon_dim: Names of the spatial dimensions to smooth.
+        min_periods: Minimum valid pixels in a window for a non-NaN result.
+    Returns:
+        DataArray of the windowed statistic, same coords and dims as input.
+    """
+    lon, lat, time = get_coordinates(da)
+    lon_dim =  lon if lon is not None else lon_dim
+    lat_dim =  lat if lat is not None else lat_dim
+    roll = da.rolling({lat_dim: pixel_window, lon_dim: pixel_window},
+                      center=True, min_periods=min_periods)
+
+    try:
+        reducer = getattr(roll, stat)
+    except AttributeError:
+        raise ValueError(f"Unknown rolling stat: {stat!r}")
+
+    smoothed = reducer()
+
+    return smoothed.rename(f'{da.name}_{stat}_{pixel_window}')
 
 
 #———————————————————————————————————————————————————————————————
@@ -1837,6 +1963,7 @@ def process_data_coldspell(
     lat/lon/time coordinates.
     """
     variable = params["variable"]
+    offset = params.get('offset', 0)
     na_replace = params.get("na_replace", None)
     period = params.get("time_window", (None, None))
 
@@ -1846,9 +1973,10 @@ def process_data_coldspell(
 
     func = params.get('func', 'mean')
     quantiles = params.get('quantiles', [0.05])
-    #threshold = params.get('threshold',)
-    num_periods = params.get('num_periods', 4)
+    threshold = params.get('threshold', 0)
+    #num_periods = params.get('num_periods', 4)
     side = params.get('side', 'lower')
+    pixel_window = params.get('pixel_window', 3)
 
 
     # Subset climate area geometry.
@@ -1877,6 +2005,7 @@ def process_data_coldspell(
 
     # Time slice + NA replacement.
     ds_clean = clean_data(ds_slice, date_range=period, var=variable, na_replace=na_replace, normalize_time=False)
+    ds_clean[variable] = ds_clean[variable] - offset
     print("Cleaning done")
 
     # Get climatology statistics    
@@ -1891,16 +2020,43 @@ def process_data_coldspell(
         quantiles=quantiles,
     )
     print(f"Climatology statistics computed")
+    
     # Get extreme episodes
-    ds_process = get_extreme_episodes(
+    event_name = 'cold_spell' if side=='lower' else 'heat_wave'
+    ds_process = flag_and_intensity(
         ds_process,
         variable,
         'perc_p05',
-        var_name='cold_spell',
-        num_periods=num_periods,
+        var_name=event_name,
         side=side,
+        hard_threshold=threshold,
     )
     print(f"Extreme events computed")
+    
+    # Verify that the event happens locally by counting flags around each pixel
+    ds_process[f'valid_{event_name}'] = spatial_rolling_stat(
+        ds_process[f'flag_{event_name}'], 
+        pixel_window=pixel_window, 
+        stat='sum'
+    ) # Spatial rolling that sums the amount of flags in a box of 'pixel_window' size
+    min_size = np.ceil(pixel_window/2)**2 # Minimum amount of pixels to count a flag as valid
+    # Keep events only if the number of flags around is bigger than 'min_size'
+    ds_process[f'valid_{event_name}'] = xr.where(
+        ds_process[f'valid_{event_name}'].isnull(), np.nan, 
+        xr.where(
+            (ds_process[f'valid_{event_name}']>=min_size) & 
+            (ds_process[f'flag_{event_name}']==1), 1, 0
+        )
+    )
+    print(f'Spatial validation of events complete')
+
+    ds_process = get_extreme_episodes(
+        ds_process,
+        flag_field=f'valid_{event_name}',
+        intensity_field=f'intensity_{event_name}',
+        var_name=event_name,
+    )
+    print(f"Extreme episodes identified")
 
     return ds_process, ds_clim
 
