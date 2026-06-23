@@ -24,12 +24,12 @@ params_areas:
     #"grid_res":     300,
     
 # Params for planet subscription
-params_credentials: 
-  PLANET_API_KEY: "${oc.env:PLANET_API_KEY}"
-  S3_BUCKET: "${oc.env:S3_BUCKET}"
-  AWS_REGION: "us-east-1" #"${oc.env:AWS_REGION}"
-  AWS_ACCESS_KEY_ID: "${oc.env:AWS_ACCESS_KEY_ID}"
-  AWS_SECRET_ACCESS_KEY: "${oc.env:AWS_SECRET_ACCESS_KEY}"
+params_credentials:
+  PLANET_API_KEY: "${oc.env:PLANET_API_KEY, null}"
+  S3_BUCKET: "${oc.env:S3_BUCKET, null}"
+  AWS_REGION: "us-east-1"
+  AWS_ACCESS_KEY_ID: "${oc.env:AWS_ACCESS_KEY_ID, null}"
+  AWS_SECRET_ACCESS_KEY: "${oc.env:AWS_SECRET_ACCESS_KEY, null}"
 
 params_subscription:
   id_column: 'location_id' #'MPIO_CNMBR' #'id_canton' 
