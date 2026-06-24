@@ -58,22 +58,18 @@ params_request:
 
 params_process:
   variable: ${_arg.field}
-  na_replace: -9999 #null
-  offset: 0
+  na_replace: null
   time_window:
     - '2006-01-01'
     - '2025-12-31'
   interp_resolution: 0
   time_smooth_window: 0
-  climatology_smooth_window: 7 #0
+  climatology_smooth_window: 0
+
+params_summarize:
+  variable: ${_arg.field}
   summarize_mode: 'within' #'nearest' #'within'
-  add_neg_anom: false #true
-  
-  func: 'quantile'
-  quantiles: [0.05]
-  pixel_window: 3
-  num_periods: 3
-  side: 'lower'
+  add_abs_anom: false #true
 
 # Parameters for creating triggers
 params_indices:

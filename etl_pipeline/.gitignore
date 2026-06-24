@@ -10,10 +10,11 @@ conf/local/**
 conf/**/*credentials*
 
 # ignore everything in the following folders
+data
 data/**
 
 # except their sub-folders
-!data/**/
+#!data/**/
 
 # also keep all .gitkeep files
 !.gitkeep
@@ -143,7 +144,7 @@ celerybeat-schedule
 *.sage.py
 
 # Environments
-.env
+#.env
 .envrc
 .venv
 env/

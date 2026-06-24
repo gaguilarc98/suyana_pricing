@@ -37,7 +37,7 @@ def extract_pipeline(**kwargs) -> Pipeline:
         ),
         node(
             func = summarize_processed_data,
-            inputs = ['ds_processed', 'gdf_aoi', 'params:params_process'],
+            inputs = ['ds_processed', 'gdf_aoi', 'params:params_summarize'],
             outputs = ['df_cluster', 'df_pixels'],
             name = 'summarize_processed_data',
             tags = ['process']

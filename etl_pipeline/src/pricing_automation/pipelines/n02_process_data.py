@@ -713,14 +713,16 @@ def add_neg_anomaly(ds, field, clim_field, keep_neg_anom):
     return ds
 
 
-def _func_label(func):
+def _func_label(var_name, func):
     """Label for a non-quantile reducer: mean -> 'mean', std -> 'std', etc."""
-    return str(func)
+    return f"{var_name}_{str(func)}"
 
 
-def _quantile_label(q):
+def _quantile_label(var_name, q):
     """0.04 -> 'p04', matching the cold-spell episode convention."""
-    return f"p{int(round(float(q) * 100)):02d}"
+    perc = f"p{int(round(float(q) * 100)):02d}"
+    return f"{var_name}_{perc}" 
+
 
 def _get_time_coordinate(ds):
     """Identify the time dimension name in an xarray Dataset."""
@@ -892,15 +894,15 @@ def get_climatology_windowed(
     if func == 'quantile':
         clim_vars = {}
         for q in quantiles:
-            name = f"{var_name}_{_quantile_label(q)}"
+            name = _quantile_label(var_name, q)
             clim_vars[name] = ds_clim[field].sel(quantile=q).drop_vars('quantile')
         ds_clim = xr.Dataset(clim_vars)
         ds_clim = _rechunk(ds_clim)
         for q in quantiles:
-            name = f"{var_name}_{_quantile_label(q)}"
+            name = _quantile_label(var_name, q)
             ds = add_climatology_fields(ds, ds_clim, name, var_name=name, level=levels)
     else:
-        out_name = f"{var_name}_{_func_label(func)}"
+        out_name = _func_label(var_name, func)
         ds_clim = ds_clim.rename({field: out_name})
         ds_clim = _rechunk(ds_clim)
         ds = add_climatology_fields(ds, ds_clim, out_name, var_name=out_name, level=levels)
@@ -977,57 +979,12 @@ def cumulative_flag_values(values, flag, dim="time"):
     return (cs - base) * flag
 
 
-
-def flag_and_intensity(
-    ds,
-    field,
-    threshold_field,
-    var_name='cold_spell',
-    side='lower',
-    hard_threshold=None,
-):
+def flag_and_intensity(ds, field, threshold_field, side='lower', hard_threshold=None):
     """Flag extreme cells and measure their intensity against a per-cell threshold.
     Args:
         ds: Dataset containing `field` and `threshold_field`.
         field: Name of the observation variable.
         threshold_field: Name of the per-cell threshold variable.
-        var_name: Base name for the output variables.
-        side: 'lower' flags obs <= threshold, 'upper' flags obs >= threshold.
-    Returns:
-        ds with flag_{var_name} and intensity_{var_name} added.
-    """
-    obs = ds[field]
-    thr = ds[threshold_field]
-
-    flag_name = f'flag_{var_name}'
-    intensity_name = f'intensity_{var_name}'
-
-    if side == 'lower':
-        ds[flag_name] = xr.where(obs <= thr, 1, 0)
-        ds[intensity_name] = (thr - obs).clip(min=0)
-    elif side == 'upper':
-        ds[flag_name] = xr.where(obs >= thr, 1, 0)
-        ds[intensity_name] = (obs - thr).clip(min=0)
-    else:
-        raise ValueError(f"side must be 'lower' or 'upper', got {side!r}")
-
-    return ds
-
-
-def flag_and_intensity(
-    ds,
-    field,
-    threshold_field,
-    var_name='cold_spell',
-    side='lower',
-    hard_threshold=None,
-):
-    """Flag extreme cells and measure their intensity against a per-cell threshold.
-    Args:
-        ds: Dataset containing `field` and `threshold_field`.
-        field: Name of the observation variable.
-        threshold_field: Name of the per-cell threshold variable.
-        var_name: Base name for the output variables.
         side: 'lower' flags obs <= threshold, 'upper' flags obs >= threshold.
         hard_threshold: Optional absolute cutoff.
     Returns:
@@ -1035,9 +992,6 @@ def flag_and_intensity(
     """
     obs = ds[field]
     thr = ds[threshold_field]
-
-    flag_name = f'flag_{var_name}'
-    intensity_name = f'intensity_{var_name}'
 
     if side == 'lower':
         cond = obs <= thr
@@ -1052,10 +1006,11 @@ def flag_and_intensity(
     else:
         raise ValueError(f"side must be 'lower' or 'upper', got {side!r}")
 
-    ds[flag_name] = xr.where(cond, 1, 0)
-    ds[intensity_name] = depth.where(cond, 0)
-
-    return ds
+    flag = xr.where(cond, 1, 0)
+    intensity = depth.where(cond, 0)
+    flag = xr.where(obs.isnull(), np.nan, flag)
+    intensity = xr.where(obs.isnull(), np.nan, intensity)
+    return flag, intensity
 
 
 def get_extreme_episodes(
@@ -1978,7 +1933,6 @@ def process_data_coldspell(
     side = params.get('side', 'lower')
     pixel_window = params.get('pixel_window', 3)
 
-
     # Subset climate area geometry.
     gdf_ca = subset_geometry(gdf, params_s)
     gdf_ca = gdf_ca.to_crs(epsg="4326")
@@ -2012,7 +1966,7 @@ def process_data_coldspell(
     ds_process, ds_clim = get_climatology_windowed(
         ds_clean,
         variable,
-        var_name='perc',
+        var_name=variable,
         levels=('dayofyear','hour'), 
         window_level='dayofyear',
         window=clim_smooth_window, 
@@ -2022,41 +1976,42 @@ def process_data_coldspell(
     print(f"Climatology statistics computed")
     
     # Get extreme episodes
-    event_name = 'cold_spell' if side=='lower' else 'heat_wave'
-    ds_process = flag_and_intensity(
+    EVENT_NAME = 'cold_spell' if side=='lower' else 'heat_wave'
+    THRESHOLD_VAR_NAME = _quantile_label(variable, quantiles[0]) # Default to first value in the list of quantiles
+    FLAG_NAME, INTENSITY_NAME = f'flag_{EVENT_NAME}', f'intensity_{EVENT_NAME}'
+    ds_process[FLAG_NAME], ds_process[INTENSITY_NAME] = flag_and_intensity(
         ds_process,
         variable,
-        'perc_p05',
-        var_name=event_name,
+        THRESHOLD_VAR_NAME,
         side=side,
         hard_threshold=threshold,
     )
     print(f"Extreme events computed")
     
     # Verify that the event happens locally by counting flags around each pixel
-    ds_process[f'valid_{event_name}'] = spatial_rolling_stat(
-        ds_process[f'flag_{event_name}'], 
+    VALID_NAME = f'valid_{EVENT_NAME}'
+    flags = ds_process[FLAG_NAME]
+    ds_process[VALID_NAME] = spatial_rolling_stat(
+        flags, 
         pixel_window=pixel_window, 
         stat='sum'
     ) # Spatial rolling that sums the amount of flags in a box of 'pixel_window' size
     min_size = np.ceil(pixel_window/2)**2 # Minimum amount of pixels to count a flag as valid
     # Keep events only if the number of flags around is bigger than 'min_size'
-    ds_process[f'valid_{event_name}'] = xr.where(
-        ds_process[f'valid_{event_name}'].isnull(), np.nan, 
-        xr.where(
-            (ds_process[f'valid_{event_name}']>=min_size) & 
-            (ds_process[f'flag_{event_name}']==1), 1, 0
-        )
-    )
+    valid = ds_process[VALID_NAME]
+    intensity = ds_process[INTENSITY_NAME]
+    cond = (ds_process[FLAG_NAME] == 1) & (valid >= min_size)  # Validate events with local count of flags
+    ds_process[VALID_NAME] = xr.where(flags.isnull(), np.nan, xr.where(cond, 1, 0))
+    ds_process[INTENSITY_NAME] = xr.where(flags.isnull(), np.nan, xr.where(cond, intensity, 0))
     print(f'Spatial validation of events complete')
 
-    ds_process = get_extreme_episodes(
-        ds_process,
-        flag_field=f'valid_{event_name}',
-        intensity_field=f'intensity_{event_name}',
-        var_name=event_name,
-    )
-    print(f"Extreme episodes identified")
+    #ds_process = get_extreme_episodes(
+    #    ds_process,
+    #    flag_field=VALID_NAME,
+    #    intensity_field=INTENSITY_NAME,
+    #    var_name=EVENT_NAME,
+    #)
+    #print(f"Extreme episodes identified")
 
     return ds_process, ds_clim
 
@@ -2105,7 +2060,7 @@ def summarize_processed_data(
         - xr.Dataset with climatologies
     """
     variable = params_process['variable']
-    add_neg_anom = params_process.get('add_neg_anom', True)
+    add_abs_anom = params_process.get('add_abs_anom', True)
     mode = params_process.get('summarize_mode', 'within')
     k_neighbors = params_process.get('k_neighbors', 1)
 
@@ -2184,10 +2139,13 @@ def summarize_processed_data(
         df_sum = df_sum.dropna(subset=[LOCATION_NAME])
         df_sum['pixel_id'] = df_sum[lon].map('{:.3f}'.format) +'_'+ df_sum[lat].map('{:.3f}'.format)
     
-    if add_neg_anom:
+    if add_abs_anom:
         df_sum[f'neg_anom_{variable}'] = np.where(
             df_sum[f'anom_{variable}'] >=0, 0, df_sum[f'anom_{variable}'] * (-1)
-        )    
+        )
+        df_sum[f'pos_anom_{variable}'] = np.where(
+            df_sum[f'anom_{variable}'] <=0, 0, df_sum[f'anom_{variable}']
+        )
 
     return df_sum, df_clusters 
 

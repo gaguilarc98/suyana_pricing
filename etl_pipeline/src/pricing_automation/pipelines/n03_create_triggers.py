@@ -770,7 +770,7 @@ def generate_payout_policy(
     """
     group_cols = list(params_trigger.get('group_cols', ['location_id']))
     lead_id    = params_request.get('lead_id', None)
-    index_desc = f"cum_{params_trigger['variable']}"
+    index_desc = df_cum['index_desc'].iloc[0] if 'index_desc' in df_cum.columns else 'cum_index'
  
     # Cross-validate window keys before any computation
     valid_window_keys = set(params_trigger['windows'].keys())
