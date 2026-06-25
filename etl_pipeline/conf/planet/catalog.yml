@@ -50,3 +50,26 @@ ds_request_2:
     append_dim: location_id
   load_args:
     consolidated: true
+
+#Index Data
+ds_climatology:
+  type: pricing_automation.datasets_registry.XarrayZarrDataset
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/features/${_arg.provider}_${_arg.field}_climatology.zarr
+  save_args:
+    consolidated: true
+    mode: a
+    append_dim: location_id
+  load_args:
+    consolidated: true
+
+# Summarized Data
+df_cluster: 
+  #type: pandas.ParquetDataset
+  #filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/outputs/${_arg.lead_id}/${_arg.provider}_${_arg.field}_daily_indices.parquet 
+  #save_args:
+  #  compression: GZIP
+  type: pricing_automation.datasets_registry.DeltaLakeDataset
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/outputs/${_arg.lead_id}/${_arg.provider}_${_arg.field}_daily_indices
+  save_args:
+    mode: append
+    schema_mode: merge

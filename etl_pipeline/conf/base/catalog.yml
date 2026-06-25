@@ -9,7 +9,7 @@
 _arg:
   country: ${runtime_params:country, ${globals:country}}
   region: ${runtime_params:region, ${globals:region}}
-  lead_id: ${runtime_params:lead_id, 'valles'}
+  lead_id: ${runtime_params:lead_id, 'test1'}
   provider: ${runtime_params:provider, ${globals:provider}}
   field: ${runtime_params:field, ${globals:field}}
   version: ${runtime_params:version, ${globals:version}}
@@ -56,18 +56,11 @@ gdf_aoi:
   file_format: parquet #Important if not provided kedro will attempt to use GDAL which does not support S3 natively
   save_args:
     compression: GZIP
-  #  driver: GPKG
-  #load_args:
-  #  driver: GPKG
-  #  encoding: UTF-8
 
 # Request data
 
 ds_request:
-  #type: pricing_automation.datasets_registry.NetCDFPartitionedDataset
-  #filepath: data/${_arg.country}/sources/${_arg.provider}/${_arg.field}_<partition>.nc
   type: pricing_automation.datasets_registry.ZarrPartitionedDataset
-  #filepath: s3://suyana-ews/${_arg.country}/sources/UCSB_prcp_<partition>.zarr
   filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/sources/${_arg.provider}_${_arg.field}_<partition>.zarr
   save_args:
     consolidated: true
@@ -103,6 +96,13 @@ ds_climatology:
     consolidated: true
 
 # Summarized Data
+gdf_locations:
+  type: geopandas.GenericDataset
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/geometries/${_arg.lead_id}_location_properties.parquet 
+  file_format: parquet #Important if not provided kedro will attempt to use GDAL which does not support S3 natively
+  save_args:
+    compression: GZIP
+
 df_pixels:
   type: pandas.ParquetDataset
   filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/features/${_arg.lead_id}/${_arg.provider}_${_arg.field}_pixel_assignment.parquet
@@ -119,8 +119,9 @@ df_cluster:
   type: pricing_automation.datasets_registry.DeltaLakeDataset
   filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/outputs/${_arg.lead_id}/${_arg.provider}_${_arg.field}_daily_indices
   save_args:
-    mode: append
-
+    mode: overwrite
+    schema_mode: overwrite
+    
 # Indices Data by Window
 df_indices: 
   type: pandas.ParquetDataset

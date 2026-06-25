@@ -6,9 +6,21 @@ _arg:
   loc_id: ${runtime_params:loc_id, 'ID-001'}
   provider: ${runtime_params:provider, ${globals:provider}}
   field: ${runtime_params:field, ${globals:field}}
-  start_year: ${runtime_params:start_year, 1996}
+  start_year: ${runtime_params:start_year, 2002}
   end_year: ${runtime_params:end_year, 2025}
 
+# Parameters for aoi bounding box
+params_s:
+  include:
+    municipio: ['Tarija']
+  exclude: {}
+  simplify: true
+  override_gdf: false
+  minx: -81.74
+  maxx: -66.85
+  miny: -4.23
+  maxy: 13.39
+  
 # Parameters for climate areas
 params_areas:
     variable: ${_arg.field}
@@ -33,16 +45,16 @@ params_credentials:
 
 params_subscription:
   id_column: 'location_id' #'MPIO_CNMBR' #'id_canton' 
-  prefix: ${_arg.country} #'CO-municipio' #'BO-SC-canton'
+  prefix: ${_arg.country}_test #'CO-municipio' #'BO-SC-canton'
   #variable: 'SWC'
   #version: 'V5.0'
   #band: 'C'
-  #start_date: '2002-06-15' #'2002-06-15' #'2012-07-25' #inclusive
-  #end_date: '2011-10-03' #'2011-10-03' #'2025-08-31' # non-inclusive
+  start_date: '2026-01-01' #'2002-06-15' #'2012-07-25'
+  end_date: '2026-01-31' #'2011-10-03' #'2025-08-31'
   
 params_transform_1:
   id_location: ${_arg.loc_id}
-  prefix: ${_arg.country}
+  prefix: ${_arg.country}_test
   #suffix: null
   #variable: 'SWC'
   start_date: '2002-06-15'
@@ -50,11 +62,11 @@ params_transform_1:
 
 params_transform_2:
   id_location: ${_arg.loc_id}
-  prefix: ${_arg.country}
+  prefix: ${_arg.country}_test
   #suffix: null
   #variable: 'SWC'
-  start_date: '2012-07-25'
-  end_date: '2025-12-31'
+  start_date: '2026-01-01' #'2012-07-25'
+  end_date: '2026-01-31' #'2025-12-31'
 
 params_process_planet:
   subset:   

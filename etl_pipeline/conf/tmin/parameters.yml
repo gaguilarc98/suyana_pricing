@@ -3,7 +3,6 @@ _arg:
   country: ${runtime_params:country, ${globals:country}}
   region: ${runtime_params:region, ${globals:region}}
   lead_id: ${runtime_params:lead_id, 'test1'}
-  loc_id: ${runtime_params:loc_id, 'ID-001'}
   provider: ${runtime_params:provider, ${globals:provider}}
   field: ${runtime_params:field, ${globals:field}}
   start_year: ${runtime_params:start_year, 1996}
@@ -34,60 +33,47 @@ params_request:
   field: ${_arg.field}
   data_path: ${globals:data_path}
 
-# Parameters for processing Planet data
-#params_process:
-#  variable:
-#    planet: 'swc'
-#    era5: 'swvl1'
-#  anom_variable: 'swc_adjusted'   # column name used for anomaly: anom_swc_adjusted
-#  na_replace:
-#    planet: 65535
-#    era5: null
-#  time_window:
-#    full: ['2002-06-19', '2025-01-01']
-#    planet1: ['2002-06-19', '2011-10-04']   # AMSRE period
-#    planet2: ['2012-07-02', null]            # AMSR2 period
-#    era5:    ['2011-10-04', '2012-07-02']   # Gap-fill period
-#  subset:
-#    location_var: 'location_id'
-#  interp_resolution: 0.1
-#  fill_gap_window: 30
-#  cdf_time_window: 15
-#  time_smooth_window: 30
-#  climatology_smooth_window: 30
-
+# Parameters for processing temperature data
 params_process:
   variable: ${_arg.field}
-  na_replace: null
+  na_replace: -9999
+  offset: 0
   time_window:
     - '2006-01-01'
     - '2025-12-31'
   interp_resolution: 0
   time_smooth_window: 0
-  climatology_smooth_window: 0
+  climatology_smooth_window: 7
+  func: 'quantile'
+  quantiles: [0.05]
+  side: 'lower'
+  threshold: 5
+  pixel_window: 3
+  num_periods: 3
 
 params_summarize:
   variable: ${_arg.field}
-  summarize_mode: 'within' #'nearest' #'within'
+  summarize_mode: 'nearest' #'nearest' #'within'
   add_abs_anom: false #true
+
 
 # Parameters for creating triggers
 params_indices:
-  variable: 'anom_swc' #'prcp'
+  variable: 'intensity_cold_spell'
   group_cols: ['location_id']
-  dist: 't' #'gamma'
-  start_time: '1996-01-01'
+  dist: 'gamma'
+  start_time: '2006-01-01'
   windows: 
-    1: ['06-01', '12-31'] #['05-20', '09-30']   # main growing season
-    2: ['08-01', '01-31']   # second season (crosses year-end)
+    1: ['08-30', '11-30'] #['05-20', '09-30']   # main growing season
+    #2: ['06-01', '10-31']   # second season (crosses year-end)
 
 params_contract:
   # Shared pricing defaults (override per crop or tail if needed)
   target_loss_ratio: 0.74 #0.65 #
   deductions: 0.175 #0.10 #
   # Uniform fallbacks -- used when not set at crop or tail level
-  coverage: 1 #0.14 #
-  insured_value: 300 #7_200_000 #
+  coverage: 0.5 #0.14 #
+  insured_value: 750 #7_200_000 #
   crops: 
     all: 
       # Monitors both deficit in lower and excess in upper
@@ -99,16 +85,8 @@ params_contract:
             #  'levels': [10, 1] #{20: 0.30, 10: 0.4, 5: 0.5} #
             #  # inherits coverage=0.14, insured_value=7_200_000 from top level
             upper: 
-              design: 'layered' #'continuous' #
-              levels: {80: 0.30, 90: 0.4, 95: 0.5} #[90, 99] #
-          2:
-            upper: 
-              design: 'layered' #'continuous' #
-              levels: {80: 0.30, 90: 0.4, 95: 0.5} #[90, 99] #
-          #3:
-          #  upper:
-          #    design: 'layered' #'continuous' #
-          #    levels: {80: 0.30, 90: 0.4, 95: 0.5}
+              design: 'continuous' #'continuous' #
+              levels: [90, 98] #[90, 99] #
 
 # Parameters for boostrap analysis
 params_bootstrap:
@@ -127,8 +105,8 @@ params_map:
     'window': [1, 2],
     'tail': ['upper']
   }
-  title: Activaciones Promedio — Verano e Invierno — Exceso y Déficit # custom
-  start_year: 2014   # optional
+  title: Activaciones Promedio — Verano e Invierno — Exceso y Déficit
+  start_year: 2014
 
 params_series:
   id_location:   ID-0196 #ID-102-01 #ID-0196

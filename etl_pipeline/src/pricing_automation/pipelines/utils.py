@@ -217,6 +217,7 @@ def match_grid_points(ds_sample, df_target, sample_coords = ('lon', 'lat'), targ
         df_s = ds_sample[[lon_sample, lat_sample]].drop_duplicates().reset_index(drop=True)
     elif isinstance(ds_sample, xr.Dataset):
         df_s = ds_sample[[lon_sample, lat_sample]].to_dataframe().reset_index()
+        df_s = df_s[[lon_sample, lat_sample]].drop_duplicates().reset_index(drop=True)
 
     # Nearest Neighbor Algorithm
     if len(df_s) == 0:
@@ -227,45 +228,39 @@ def match_grid_points(ds_sample, df_target, sample_coords = ('lon', 'lat'), targ
     tree = cKDTree(df_s)
     dist, idx = tree.query(df_t[[lon_target, lat_target]], k=k_actual)
 
-    # Join Sample coordinate to target coordinates
-    idx_flat = np.clip(np.asarray(idx).flatten(), 0, len(df_s) - 1)
+    # Normalize to 2D so k=1 and k>1 share one code path
+    idx = np.atleast_2d(idx.T).T if idx.ndim == 1 else idx
+    dist = np.atleast_2d(dist.T).T if dist.ndim == 1 else dist
+
+    idx_flat = np.clip(idx.flatten(), 0, len(df_s) - 1)
     df_join = df_s.iloc[idx_flat].copy()
-    df_join['index'] = np.repeat(df_t.index, k)
-    df_join["distance"] = dist.flatten()
-    df_target = df_target.merge(
-        df_join,
-        how = 'left',
-        on = 'index',
-        suffixes = ('_target', '')
-    )
+    df_join['index'] = np.repeat(df_t['index'].values, k_actual)
+    df_join['distance'] = dist.flatten()
+    df_join['neighbor_rank'] = np.tile(np.arange(k_actual), len(df_t))
+
+    df_target = df_target.merge(df_join, how='left', on='index', suffixes=('_target', ''))
     df_target = df_target.drop(columns='index')
 
     return df_target
 
 
-def select_coordinates(ds, gdf_target, grid_coords = ('lon', 'lat')):
+def select_coordinates(ds, gdf_target, grid_coords=('lon', 'lat')):
     """Select in-situ coordinate points from grid, ds and gdf must share the same grid coord names"""
     lon_grid, lat_grid = grid_coords
-    ds_stacked = ds.stack(points = (lat_grid, lon_grid))
+    ds_stacked = ds.stack(points=(lat_grid, lon_grid))
 
-    # Get coordinates from target
     df_coords_station = gdf_target[[lat_grid, lon_grid]].drop_duplicates().reset_index(drop=True)
 
-    # Snap target coordinates to the nearest actual grid values to avoid
-    # floating-point precision mismatches between the DataFrame and the
-    # stacked MultiIndex.
+    # Vectorized snap to nearest grid value (replaces per-row .apply argmin)
     grid_lats = ds[lat_grid].values
     grid_lons = ds[lon_grid].values
 
-    def _snap(val, grid):
-        return grid[int(np.argmin(np.abs(grid - val)))]
-
-    df_coords_station[lat_grid] = df_coords_station[lat_grid].apply(lambda v: _snap(v, grid_lats))
-    df_coords_station[lon_grid] = df_coords_station[lon_grid].apply(lambda v: _snap(v, grid_lons))
+    lat_idx = np.abs(df_coords_station[lat_grid].values[:, None] - grid_lats[None, :]).argmin(axis=1)
+    lon_idx = np.abs(df_coords_station[lon_grid].values[:, None] - grid_lons[None, :]).argmin(axis=1)
+    df_coords_station[lat_grid] = grid_lats[lat_idx]
+    df_coords_station[lon_grid] = grid_lons[lon_idx]
 
     target_index = pd.MultiIndex.from_frame(df_coords_station)
-
-    #Subset the Master Table with locations of interest
     ds_subset = ds_stacked.sel(points=target_index)
     return ds_subset
 
