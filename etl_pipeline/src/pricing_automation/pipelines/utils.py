@@ -24,6 +24,8 @@ from shapely import Polygon, LineString, Point
 from shapely.geometry import box, Polygon, MultiPolygon, Point, MultiPoint
 from scipy.ndimage import uniform_filter, minimum_filter, maximum_filter
 from scipy.spatial import cKDTree
+import fiona
+fiona.drvsupport.supported_drivers["KML"] = "rw"
 
 ## PLOTTING LIBRARIES
 import seaborn as sns
@@ -101,6 +103,16 @@ def get_coordinates(ds: xr.Dataset):
     
     return lon_var, lat_var, time_var
 
+
+def get_time_coordinate(ds):
+    """Identify the time dimension name in an xarray Dataset."""
+    for name in ds.sizes.keys():
+        if ds[name].dtype.kind == 'M':  # numpy datetime64
+            return name
+    for name in ds.sizes.keys():
+        if hasattr(ds[name], 'dt'):
+            return name
+    raise ValueError(f"No time coordinate found in dataset. Coordinates: {list(ds.sizes)}")
 
 def regrid_dataset(
     ds,
@@ -332,7 +344,7 @@ def slice_dataset_w_geometry(ds, gdf):
 ########____CLEANING POLYGONS____########
 
 
-def add_area_column(gdf, name_var='area_km2', area_crs="auto"):
+def get_area_column(gdf, units='ha', area_crs="auto"):
     """Adds an 'area_km2' column to the GeoDataFrame with polygon areas in square kilometers"""
     if area_crs == "auto":
         try:
@@ -341,8 +353,14 @@ def add_area_column(gdf, name_var='area_km2', area_crs="auto"):
             area_crs = "EPSG:6933"  # Global equal-area fallback
     
     gdf_proj = gdf.to_crs(area_crs)
-    gdf[name_var] = gdf_proj.area/1e6
-    return gdf
+    if units=='m2':
+        return gdf_proj.area
+    elif units=='km2':
+        return gdf_proj.area/1e6
+    elif units=='ha':
+        return gdf_proj.area/1e4
+    else:
+        raise ValueError(f'units must be one of "ha", "m2" or "km2" got "{units}" instead')
 
 
 def clean_polygons(gdf):

@@ -8,11 +8,14 @@ _arg:
   field: ${runtime_params:field, ${globals:field}}
   start_year: ${runtime_params:start_year, 2002}
   end_year: ${runtime_params:end_year, 2025}
+  start_indices_at: ${runtime_params:start_indices_at, '2010-01-01'}
+  target_loss_ratio: ${runtime_params:target_loss_ratio, 0.74}
+  deductions: ${runtime_params:deductions, 0.175}
 
 # Parameters for aoi bounding box
 params_s:
   include:
-    municipio: ['Tarija']
+    municipio: ['Puerto Villarroel'] #['Mizque', 'Quillacollo', 'Colomi', 'Tarija', 'Yapacaní', 'Puerto Villarroel', 'Yapacaní', 'Chimoré']
   exclude: {}
   simplify: true
   override_gdf: false
@@ -49,8 +52,8 @@ params_subscription:
   #variable: 'SWC'
   #version: 'V5.0'
   #band: 'C'
-  start_date: '2026-01-01' #'2002-06-15' #'2012-07-25'
-  end_date: '2026-01-31' #'2011-10-03' #'2025-08-31'
+  start_date: '2026-02-01' #'2002-06-15' #'2012-07-25'
+  end_date: '2026-02-28' #'2011-10-03' #'2025-08-31'
   
 params_transform_1:
   id_location: ${_arg.loc_id}

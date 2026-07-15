@@ -7,18 +7,16 @@ import logging
 def run_bootstrap_aep(df_orig, gdf_aoi, params_bootstrap):
     n_iterations = params_bootstrap.get("n_iterations", 10000)
     seed = params_bootstrap.get("seed", 42)
-    loss_usd_ha = params_bootstrap.get('loss_usd_ha', 1)
     
     LOCATION_NAME = 'location_id'
-    gdf_aoi = add_area_column(gdf_aoi)
-    gdf_aoi['area_ha'] = gdf_aoi['area_km2']*100
+    gdf_aoi['area_ha'] = get_area_column(gdf_aoi, 'ha')
     df = df_orig.copy()
     df = df.merge(
         gdf_aoi[[LOCATION_NAME, 'area_ha']],
         how = 'left',
         on = [LOCATION_NAME]
     )
-    df['loss_usd'] = df['area_ha'] * df['total_payout'] #* loss_usd_ha
+    df['loss_usd'] = df['payout'] #* loss_usd_ha
 
     # 1. Aggregate annual losses per crop & combined
     logging.info("Aggregating annual losses...")

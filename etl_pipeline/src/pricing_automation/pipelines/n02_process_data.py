@@ -46,7 +46,7 @@ def _slice_single_geometry(ds_orig, gdf_orig, params_areas):
     gdf = gdf_orig.copy()
  
     # Area guard
-    gdf = add_area_column(gdf, "_area_km2")
+    gdf['_area_sqkm'] = get_area_column(gdf, 'km2')
     area_km2 = gdf["_area_km2"].iloc[0]
     gdf = gdf.drop(columns=["_area_km2"])
  
@@ -110,7 +110,7 @@ def _slice_single_geometry(ds_orig, gdf_orig, params_areas):
         gdf_cluster[f'{location_var}_orig'].astype(str) + '-' + 
         gdf_cluster[cluster_var].astype(str).str.rjust(2,"0")
     )
-    gdf_cluster = add_area_column(gdf_cluster)
+    gdf_cluster['_area_ha'] = get_area_column(gdf_cluster, 'ha')
  
     return gdf_cluster
 
@@ -696,6 +696,7 @@ def process_data_request(
     print(f"Renaming variables done")
 
     # Clean data with time slices and na replace values
+    print(period)
     ds_clean = clean_data(ds_slice, date_range = period, var=variable, na_replace=na_replace)
     print(f"Cleaning done")
 
@@ -711,6 +712,13 @@ def process_data_request(
 
     # Compute anomalies using the added climatology
     ds_process[f'anom_{variable}'] = ds_process[variable] - ds_process[f'clim_{variable}']
+    if variable in ['swc']:
+        ds_process[f'neg_anom_{variable}'] = xr.where(
+            ds_process[f'anom_{variable}'] < 0 , ds_process[f'anom_{variable}'] * (-1), 0
+        )
+        ds_process[f'pos_anom_{variable}'] = xr.where(
+            ds_process[f'anom_{variable}'] > 0 , ds_process[f'anom_{variable}'], 0
+        )
 
     print('Climatology and anomaly successfully added')
     
@@ -933,121 +941,6 @@ def process_data(
         params_s
     )
     return ds_process, ds_clim
-
-
-#———————————————————————————————————————————
-# SUMMARIZE GROUPED DATASET
-#———————————————————————————————————————————
-
-
-def summarize_processed_data(
-    ds_orig : xr.Dataset,
-    gdf : gpd.GeoDataFrame,
-    params_process: dict,
-):
-    """
-    Add a layer to group the original pixel values into climate area values
-    Args:
-        - ds : (xr.Dataset) Dataset with Soil Water Content data
-        - gdf : (gpd.GeoDataFrame) GeoDataFrame with geometries
-        - params_s : (dict) Dictionary with parameters to process data
-    Returns:
-        - pd.DataFrame with processed data
-        - xr.Dataset with climatologies
-    """
-    variable = params_process['variable']
-    add_abs_anom = params_process.get('add_abs_anom', True)
-    mode = params_process.get('summarize_mode', 'within')
-    k_neighbors = params_process.get('k_neighbors', 1)
-
-    # Resolve dict-style variable (Planet config) to the value present in dataset
-    if isinstance(variable, dict):
-        variable = next(
-            (v for v in variable.values() if v in ds_orig.data_vars),
-            list(variable.values())[0]
-        )
-
-    ds = ds_orig.copy()
-    # Subset climate area geometry
-    LOCATION_NAME = 'location_id'
-    gdf_aoi = gdf.to_crs(epsg='4326')
-
-    def nearest_method(ds, gdf_aoi, LOCATION_NAME, check_var, k):
-        lon, lat, time =  get_coordinates(ds)
-        ds_clean, df_clusters = create_cluster_coord(ds, gdf_aoi, LOCATION_NAME, method='nearest', check_var=check_var, k=k)
-        ds_sum = summarize_data(ds_clean, group_coords=['points'])
-        print(f"Nearest neighbors selection done")
-
-        df_sum = ds_sum.reset_index('points').to_dataframe()
-        df_sum = df_sum.reset_index().drop(columns='points', errors='ignore')
-
-        # Round coordinates to avoid float-precision mismatches between
-        # df_clusters (numpy source) and df_sum (xarray reset_index source)
-        _PREC = 6
-        df_key = df_clusters[[lon, lat, LOCATION_NAME]].copy()
-        df_key[lon] = df_key[lon].round(_PREC)
-        df_key[lat] = df_key[lat].round(_PREC)
-        if lon in df_sum.columns:
-            df_sum[lon] = df_sum[lon].round(_PREC)
-        if lat in df_sum.columns:
-            df_sum[lat] = df_sum[lat].round(_PREC)
-
-        # Append location var to dataframe using coordinates
-        merge_on = [c for c in [lon, lat] if c in df_sum.columns]
-        df_sum = df_key.merge(
-            df_sum,
-            how='right',
-            on=merge_on
-        ).drop(columns=[lon, lat], errors='ignore')
-
-        return df_sum, df_clusters
-
-    # Summarize the arrays along a specified dimension
-    if mode == 'nearest':
-        df_sum, df_clusters = nearest_method(ds, gdf_aoi, LOCATION_NAME, variable, k=k_neighbors)
-        print(f"Clustering with nearest neighbor strategy done")
-
-    elif mode == 'within':
-        ds_clean, df_clusters = create_cluster_coord(ds, gdf_aoi, LOCATION_NAME) #Using v2 is faster since it applies a spatial join
-        ds_sum = summarize_data(ds_clean, group_coords=[LOCATION_NAME])
-        print(f"Clustering and summarizing done using within strategy")
-
-        df_sum = ds_sum.to_dataframe().reset_index()
-        # Filter locations with all nans
-        df_sum = df_sum.groupby(LOCATION_NAME).filter(lambda x: x[variable].count() !=0)
-
-        # Assign pixels to left out geometries due to their size
-        list_out = list(set(gdf_aoi[LOCATION_NAME].values) - set(df_sum[LOCATION_NAME].unique()))
-        if len(list_out)>0:
-            print(f"Applying nearest strategy for {len(list_out)} polygons")
-            gdf_out = gdf_aoi[gdf_aoi[LOCATION_NAME].isin(list_out)]
-
-            df_sum_out, df_clusters_out = nearest_method(ds, gdf_out, LOCATION_NAME, variable, k=k_neighbors)
-
-            # Concatenate both datasets
-            df_sum = pd.concat([df_sum, df_sum_out], axis=0, ignore_index=True)
-            df_clusters = pd.concat([df_clusters, df_clusters_out], axis=0, ignore_index=True)
-    
-    elif mode == 'pixel':
-        ds_clean, df_clusters = create_cluster_coord(ds, gdf_aoi, LOCATION_NAME, method='within')
-        lon, lat, time =  get_coordinates(ds_clean)
-        df_sum = ds_clean.to_dataframe().reset_index()
-        df_sum = df_sum.dropna(subset=[LOCATION_NAME])
-        df_sum['pixel_id'] = (
-            np.round(df_sum[lon].values, 3).astype(str)
-            + '_'
-            + np.round(df_sum[lat].values, 3).astype(str)
-        )
-    
-    if add_abs_anom:
-        df_sum[f'neg_anom_{variable}'] = np.where(
-            df_sum[f'anom_{variable}'] >=0, 0, df_sum[f'anom_{variable}'] * (-1)
-        )
-        df_sum[f'pos_anom_{variable}'] = np.where(
-            df_sum[f'anom_{variable}'] <=0, 0, df_sum[f'anom_{variable}']
-        )
-
-    return df_sum, df_clusters
 
 
 #———————————————————————————————————————————

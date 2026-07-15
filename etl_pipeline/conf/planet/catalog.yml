@@ -22,6 +22,28 @@ dt_planet_catalog:
   save_args:
     mode: append
 
+# Planet source data (pre-existing in S3, partitioned by location_id)
+planet_amsre:
+  type: pricing_automation.datasets_registry.ZarrPartitionedDataset
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/sources/PLANET_AMSRE_swc_<partition>.zarr
+  load_args:
+    combine: by_coords
+    parallel: true
+
+planet_amsr2:
+  type: pricing_automation.datasets_registry.ZarrPartitionedDataset
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/sources/PLANET_AMSR2_swc_<partition>.zarr
+  load_args:
+    combine: by_coords
+    parallel: true
+
+era5_gap:
+  type: pricing_automation.datasets_registry.ZarrPartitionedDataset
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/sources/ERA5_swc_<partition>.zarr
+  load_args:
+    combine: by_coords
+    parallel: true
+
 # Climate areas data
 gdf_climate_areas:
   type: geopandas.GenericDataset
@@ -29,11 +51,24 @@ gdf_climate_areas:
   file_format: parquet
   save_args:
     compression: GZIP
+  #load_args:
+  #  encoding: UTF8
 
 #  Request data from Planet
+ds_request:
+  type: pricing_automation.datasets_registry.ZarrPartitionedDataset
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/sources/ERA5_${_arg.field}_<partition>.zarr
+  save_args:
+    consolidated: true
+    mode: w
+  load_args:
+    combine: by_coords
+    parallel: true
+    drop_variables: ['expver', 'number']
+
 ds_request_1:
   type: pricing_automation.datasets_registry.XarrayZarrDataset
-  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/sources/PLANET_AMSRE_${_arg.field}_${_arg.loc_id}.zarr
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/sources/${_arg.provider}_AMSRE_${_arg.field}_${_arg.loc_id}.zarr
   save_args:
     consolidated: true
     mode: w
@@ -43,7 +78,7 @@ ds_request_1:
 
 ds_request_2:
   type: pricing_automation.datasets_registry.XarrayZarrDataset
-  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/sources/PLANET_AMSR2_${_arg.field}_${_arg.loc_id}.zarr
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/sources/${_arg.provider}_AMSR2_${_arg.field}_${_arg.loc_id}.zarr
   save_args:
     consolidated: true
     mode: w
@@ -69,7 +104,7 @@ df_cluster:
   #save_args:
   #  compression: GZIP
   type: pricing_automation.datasets_registry.DeltaLakeDataset
-  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/outputs/${_arg.lead_id}/${_arg.provider}_${_arg.field}_daily_indices
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/outputs/${_arg.provider}_${_arg.field}_daily_indices
   save_args:
     mode: append
     schema_mode: merge

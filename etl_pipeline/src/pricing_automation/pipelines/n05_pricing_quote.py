@@ -10,7 +10,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 def run_pricing_quote(df, params_quote):
     
     loading_factor = params_quote.get("loading_factor", 1.5)
-    margin = params_quote.get("margin", 0.20)
+    loss_ratio = params_quote.get("loss_ratio", 0.20)
 
     # Read annual_agg DataFrame    
     logging.info("Calculating Average Annual Loss (AAL) and Pricing...")
@@ -26,7 +26,7 @@ def run_pricing_quote(df, params_quote):
     pricing["technical_premium_usd"] = pricing["AAL_usd"] + (loading_factor * pricing["StdDev_usd"])
     
     # Commercial Premium = Technical Premium / (1 - Margin)
-    pricing["commercial_premium_usd"] = pricing["technical_premium_usd"] / (1 - margin)
+    pricing["commercial_premium_usd"] = pricing["technical_premium_usd"] / loss_ratio
     
     # Sort with Combined at the top if present
     pricing["is_combined"] = pricing["crop"] == "Combined"

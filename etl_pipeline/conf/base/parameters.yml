@@ -3,16 +3,18 @@ _arg:
   country: ${runtime_params:country, ${globals:country}}
   region: ${runtime_params:region, ${globals:region}}
   lead_id: ${runtime_params:lead_id, 'test1'}
-  loc_id: ${runtime_params:loc_id, 'ID-001'}
   provider: ${runtime_params:provider, ${globals:provider}}
   field: ${runtime_params:field, ${globals:field}}
-  start_year: ${runtime_params:start_year, 1996}
+  start_year: ${runtime_params:start_year, 2006}
   end_year: ${runtime_params:end_year, 2025}
+  start_indices_at: ${runtime_params:start_indices_at, '2010-01-01'}
+  target_loss_ratio: ${runtime_params:target_loss_ratio, 0.74}
+  deductions: ${runtime_params:deductions, 0.175}
 
 # Parameters for aoi bounding box
 params_s:
   include:
-    municipio: ['Mizque', 'Quillacollo', 'Colomi', 'Tarija']
+    AdminLvl1: ['Nordeste']
   exclude: {}
   simplify: false #true
   override_gdf: false
@@ -58,88 +60,105 @@ params_request:
 
 params_process:
   variable: ${_arg.field}
-  na_replace: null
+  na_replace: -9999
   time_window:
     - '2006-01-01'
-    - '2025-12-31'
+    - '2026-05-31'
   interp_resolution: 0
   time_smooth_window: 0
   climatology_smooth_window: 0
 
+params_lead_specs:
+  lead_id: ${_arg.lead_id}
+  value_type: 'Production Cost' # Either 'Production Cost' or 'Loan Amount'
+  value_amount: 750
+  size_ha: 320
+  rate: null
+  term: null
+  target_premium: null
+  crop: all
+  coverage: 1
+
 params_summarize:
   variable: ${_arg.field}
-  summarize_mode: 'within' #'nearest' #'within'
+  summarize_mode: 'nearest' #'nearest' #'within'
   add_abs_anom: false #true
 
 # Parameters for creating triggers
 params_indices:
-  variable: 'anom_swc' #'prcp'
+  variable: 'neg_anom_swc' #'prcp'
   group_cols: ['location_id']
   dist: 't' #'gamma'
-  start_time: '1996-01-01'
-  windows: 
-    1: ['06-01', '12-31'] #['05-20', '09-30']   # main growing season
-    2: ['08-01', '01-31']   # second season (crosses year-end)
+  start_time: ${_arg.start_indices_at}
+  windows:
+    1: ['10-01', '05-31']
+    #2: ['08-01', '01-31']
 
+
+# Shared pricing defaults (override per crop or tail if needed)
 params_contract:
-  # Shared pricing defaults (override per crop or tail if needed)
-  target_loss_ratio: 0.74 #0.65 #
-  deductions: 0.175 #0.10 #
-  # Uniform fallbacks -- used when not set at crop or tail level
-  coverage: 1 #0.14 #
-  insured_value: 300 #7_200_000 #
-  crops: 
-    all: 
-      # Monitors both deficit in lower and excess in upper
-      windows: 
-          1:
-            #lower: 
-            #  # Deficit rainfall: continuous ramp from p10 to p1
-            #  'design': 'continuous' #'layered' #
-            #  'levels': [10, 1] #{20: 0.30, 10: 0.4, 5: 0.5} #
-            #  # inherits coverage=0.14, insured_value=7_200_000 from top level
-            upper: 
-              design: 'layered' #'continuous' #
-              levels: {80: 0.30, 90: 0.4, 95: 0.5} #[90, 99] #
-          2:
-            upper: 
-              design: 'layered' #'continuous' #
-              levels: {80: 0.30, 90: 0.4, 95: 0.5} #[90, 99] #
-          #3:
-          #  upper:
-          #    design: 'layered' #'continuous' #
-          #    levels: {80: 0.30, 90: 0.4, 95: 0.5}
+  target_loss_ratio: ${_arg.target_loss_ratio}
+  deductions: ${_arg.deductions}
+  # Monitors both deficit in lower and excess in upper
+  windows: 
+      1:
+        #lower: 
+        #  # Deficit rainfall: continuous ramp from p10 to p1
+        #  'design': 'continuous' #'layered' #
+        #  'levels': [10, 1] #{20: 0.30, 10: 0.4, 5: 0.5} #
+        #  # inherits coverage=0.14, insured_value=7_200_000 from top level
+        upper: 
+          design: 'continuous' #'continuous' #
+          levels: {90: 0, 100: 1} #{90: 0, 99:1} #
+      #2:
+      #  upper: 
+      #    design: 'layered' #'continuous' #
+      #    levels: {80: 0.30, 90: 0.4, 95: 0.5} #{90: 0, 99:1} #
 
 # Parameters for boostrap analysis
 params_bootstrap:
   n_iterations: 1000
   seed: 42
-  loss_usd: 1
 
 params_quote:
-  loading_factor: 1.5
-  margin: 0.20
-
+  loading_factor: 0.05
+  loss_ratio: ${_arg.target_loss_ratio}
 
 # Viz parameters
-params_map:
-  include : {
-    'window': [1, 2],
-    'tail': ['upper']
-  }
-  title: Activaciones Promedio — Verano e Invierno — Exceso y Déficit # custom
-  start_year: 2014   # optional
-
 params_series:
-  id_location:   ID-0196 #ID-102-01 #ID-0196
-  id_name:       ID-0196 #ID-102-01 #ID-0196
-  window:        1
-  crop:          all
-  tail:          lower
-  season_name:   05-01 to 09-30 (deficit)
-  start_time:    2003-01-01
-  variable:      ${_arg.field}
-  clim_variable: clim_${_arg.field}
-  anom_variable: anom_${_arg.field}
-  cum_variable:  ${_arg.field}
+  window: 1                         # required, key into params_indices['windows']
+  variable: ${_arg.field}           # required, column plotted as the raw/anomaly series
+  cum_variable: anom_${_arg.field}  # required, column used for the cumulated index (bottom panel)
+  clim_variable: clim_${_arg.field} # required, climatology column plotted in top panel
+  start_time: 2010-01-01            # optional, default: None (no lower x-limit clip)
+  end_time: 2025-12-31              # optional, default: None (no upper clip)
+  title: Soil Water Content index construction  # optional, default: None (no suptitle)
+  #figsize: [12, 7]                  # optional, default: (12, 7)
+  subset:                           # optional, default: {} (passed to subset_geometry)
+    include:                        
+      location_id: ['ID-001']
+      #crop: ['all']                  # optional
+      #tail: ['upper']                # optional
 
+params_intensity:
+  variable: anom_${_arg.field} # required, name of the 0/1 event variable in ds
+  title: Intensity of events by year   # optional, default: 'Event frequency by year'
+  bar_label: Event intensity       # optional, default: 'Event frequency'
+  start_year: 2010                 # optional, drops years before this one
+  mask_zeroes: false                # optional, default: false
+  period_start: "10-01"             # optional, "MM-DD"; must be paired with period_end
+  period_end: "05-31"                # optional, "MM-DD"; must be paired with period_start
+
+params_annual:
+  payout_col: payout              # required, column with payout values
+  title: Annual Payouts           # required, figure title
+  split_col: null                 # optional, default: None (one subplot per unique value)
+  premium_col: null               # optional, default: None (premium line/bar skipped if omitted)
+  year_col: window_year           # optional, default: 'window_year'
+  agg: sum                        # optional, default: 'mean' (e.g. 'sum', 'median')
+  payout_label: Total Payout      # optional, default: 'Pago total'
+  #premium_label: Total Premium    # optional, default: 'Prima total'
+  ylabel: USD                     # optional, default: None
+  #figsize: [12, 5]                # optional, default: (12, 5) single / (14, 3.5*n_groups) split
+  #palette: Set2                   # optional, default: 'Set2'
+  #bar: false                      # optional, default: false (premium as line vs bar)

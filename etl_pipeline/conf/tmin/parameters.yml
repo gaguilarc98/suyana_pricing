@@ -7,11 +7,13 @@ _arg:
   field: ${runtime_params:field, ${globals:field}}
   start_year: ${runtime_params:start_year, 1996}
   end_year: ${runtime_params:end_year, 2025}
+  target_loss_ratio: ${runtime_params:target_loss_ratio, 0.74}
+  deductions: ${runtime_params:deductions, 0.175}
 
 # Parameters for aoi bounding box
 params_s:
   include:
-    municipio: ['Mizque', 'Quillacollo', 'Colomi', 'Tarija']
+    AdminLvl1: ['Buenos Aires']
   exclude: {}
   simplify: false #true
   override_gdf: false
@@ -51,6 +53,17 @@ params_process:
   pixel_window: 3
   num_periods: 3
 
+params_lead_specs:
+  lead_id: ${_arg.lead_id}
+  value_type: 'Production Cost' # Either 'Production Cost' or 'Loan Amount'
+  value_amount: 750
+  size_ha: 320
+  rate: null
+  term: null
+  target_premium: null # optional
+  crop: all
+  coverage: 0.5
+
 params_summarize:
   variable: ${_arg.field}
   summarize_mode: 'nearest' #'nearest' #'within'
@@ -62,62 +75,67 @@ params_indices:
   variable: 'intensity_cold_spell'
   group_cols: ['location_id']
   dist: 'gamma'
-  start_time: '2006-01-01'
+  start_time: '2006-01-01' # optional
   windows: 
     1: ['08-30', '11-30'] #['05-20', '09-30']   # main growing season
     #2: ['06-01', '10-31']   # second season (crosses year-end)
 
+# Shared pricing defaults (override per crop or tail if needed)
 params_contract:
-  # Shared pricing defaults (override per crop or tail if needed)
-  target_loss_ratio: 0.74 #0.65 #
-  deductions: 0.175 #0.10 #
-  # Uniform fallbacks -- used when not set at crop or tail level
-  coverage: 0.5 #0.14 #
-  insured_value: 750 #7_200_000 #
-  crops: 
-    all: 
-      # Monitors both deficit in lower and excess in upper
-      windows: 
-          1:
-            #lower: 
-            #  # Deficit rainfall: continuous ramp from p10 to p1
-            #  'design': 'continuous' #'layered' #
-            #  'levels': [10, 1] #{20: 0.30, 10: 0.4, 5: 0.5} #
-            #  # inherits coverage=0.14, insured_value=7_200_000 from top level
-            upper: 
-              design: 'continuous' #'continuous' #
-              levels: [90, 98] #[90, 99] #
+  target_loss_ratio: ${_arg.target_loss_ratio}
+  deductions: ${_arg.deductions}
+  # Monitors both deficit in lower and excess in upper
+  windows: 
+      1:
+        #lower: 
+        #  # Deficit rainfall: continuous ramp from p10 to p1
+        #  'design': 'continuous' #'layered' #
+        #  'levels': [10, 1] #{20: 0.30, 10: 0.4, 5: 0.5} #
+        #  # inherits coverage=0.14, insured_value=7_200_000 from top level
+        upper: 
+          design: 'continuous' #'continuous' #
+          levels: {94: 0, 99: 1} #[90, 99] #
 
 # Parameters for boostrap analysis
 params_bootstrap:
   n_iterations: 1000
   seed: 42
-  loss_usd: 1
 
 params_quote:
-  loading_factor: 1.5
-  margin: 0.20
+  loading_factor: 0.05
+  loss_ratio: ${_arg.target_loss_ratio}
 
 
 # Viz parameters
 params_map:
-  include : {
-    'window': [1, 2],
-    'tail': ['upper']
-  }
-  title: Activaciones Promedio — Verano e Invierno — Exceso y Déficit
-  start_year: 2014
+  title: Porcentaje de compensaciones promedio # custom
+  start_year: 2014   # optional
+  subset: {}
+    #include :             # optional
+      #window: [1, 2]     # optional
+      #tail: ['upper']    # optional
 
 params_series:
-  id_location:   ID-0196 #ID-102-01 #ID-0196
-  id_name:       ID-0196 #ID-102-01 #ID-0196
-  window:        1
-  crop:          all
-  tail:          lower
-  season_name:   05-01 to 09-30 (deficit)
-  start_time:    2003-01-01
-  variable:      ${_arg.field}
-  clim_variable: clim_${_arg.field}
-  anom_variable: anom_${_arg.field}
-  cum_variable:  ${_arg.field}
+  window: 1                         # required, key into params_indices['windows']
+  variable: ${_arg.field}           # required, column plotted as the raw/anomaly series
+  cum_variable: intensity_cold_spell  # required, column used for the cumulated index (bottom panel)
+  clim_variable: tmin_p05 # required, climatology column plotted in top panel
+  start_time: 2010-01-01            # optional, default: None (no lower x-limit clip)
+  end_time: 2025-12-31              # optional, default: None (no upper clip)
+  title: Coldspell index construction  # optional, default: None (no suptitle)
+  #figsize: [12, 7]                  # optional, default: (12, 7)
+  subset:                           # optional, default: {} (passed to subset_geometry)
+    include:                        
+      location_id: ['ID-001']
+      #crop: ['all']                  # optional
+      #tail: ['upper']                # optional
+
+params_intensity:
+  variable: intensity_cold_spell # required, name of the 0/1 event variable in ds
+  title: Intensity of events by year   # optional, default: 'Event frequency by year'
+  bar_label: Event intensity       # optional, default: 'Event frequency'
+  start_year: 2016                 # optional, drops years before this one
+  mask_zeroes: false                # optional, default: false
+  period_start: "08-30"             # optional, "MM-DD"; must be paired with period_end
+  period_end: "11-30"                # optional, "MM-DD"; must be paired with period_start
 

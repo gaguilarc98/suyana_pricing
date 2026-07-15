@@ -1,7 +1,7 @@
 data_path: s3://suyana-pricing #pricing #/home/jupyter-gabriel/suyana/drought_projects 
 #output_path: s3://suyana-pricing/projects #/home/jupyter-gabriel/suyana/drought_projects #drought_projects #drought_sc_bolivia
 country: latin_america
-region: valles
+region: total
 provider: ERA5
 field: swc
 version: ''

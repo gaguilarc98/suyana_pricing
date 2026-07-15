@@ -1,5 +1,200 @@
 from .utils import *
 
+from .a02_create_clusters import *
+
+#———————————————————————————————————————————
+# REGISTER LEAD LOCATION DATASET
+#———————————————————————————————————————————
+
+
+def register_lead_locations(
+    data,
+    params: dict
+) -> gpd.GeoDataFrame:
+    """
+    Reconstructs gdf_locations from scratch from a pd.DataFrame or
+    gpd.GeoDataFrame, filling in any columns not already present.
+    Args:
+        - data: (pd.DataFrame | gpd.GeoDataFrame) source file. If a plain
+          DataFrame, must already contain lon/lat columns. If a
+          GeoDataFrame, geometry can be points or polygons, area and
+          centroid are derived from it.
+        - params: (dict) must contain 'lead_id', plus optional fallback
+          values for value_type, value_amount, size_ha, rate, term,
+          target_premium, coverage, crop used when those columns are
+          missing from data
+    Returns:
+        - gpd.GeoDataFrame with columns in the fixed final order
+    """
+    if isinstance(data, gpd.GeoDataFrame):
+        gdf = data.copy()
+        is_points = (gdf.geom_type == 'Point').all()
+        if 'size_ha' not in gdf.columns and not is_points:
+            gdf['size_ha'] = get_area_column(gdf, 'ha')
+        gdf = gdf.to_crs(epsg=4326)
+        centroids = gdf.geometry.centroid
+        gdf['lon'] = centroids.x
+        gdf['lat'] = centroids.y
+        gdf = gpd.GeoDataFrame(
+            gdf.drop(columns='geometry'),
+            geometry=gpd.points_from_xy(gdf['lon'], gdf['lat']),
+            crs='EPSG:4326'
+        )
+    else:
+        gdf = gpd.GeoDataFrame(
+            data.copy(),
+            geometry=gpd.points_from_xy(data['lon'], data['lat']),
+            crs='EPSG:4326'
+        )
+
+    if 'cod_lead' not in gdf.columns:
+        gdf['cod_lead'] = params['lead_id']
+
+    if 'cod_sub_lead' not in gdf.columns:
+        width = len(str(len(gdf)))
+        gdf['cod_sub_lead'] = [
+            f"{params['lead_id'].upper()}-{str(i + 1).zfill(width)}" for i in range(len(gdf))
+        ]
+
+    if 'value_type' not in gdf.columns:
+        gdf['value_type'] = params.get('value_type')
+
+    for col in ['value_amount', 'size_ha', 'rate', 'term', 'target_premium', 'coverage', 'crop']:
+        if col not in gdf.columns:
+            gdf[col] = params.get(col)
+
+    is_production = gdf['value_type'] == 'Production Cost'
+    is_loan = gdf['value_type'] == 'Loan Amount'
+    gdf.loc[is_production, ['rate', 'term']] = None
+    gdf.loc[is_loan, 'size_ha'] = None
+
+    pad_width = len(str(len(gdf)))
+    gdf['location_id'] = [
+        f"ID-{str(i + 1).zfill(max(pad_width, 3))}" for i in range(len(gdf))
+    ]
+
+    col_order = [
+        'location_id', 'cod_lead', 'cod_sub_lead', 'lon', 'lat',
+        'value_type', 'value_amount', 'size_ha', 'rate', 'term',
+        'target_premium', 'coverage', 'crop', 'geometry'
+    ]
+    return gdf[col_order]
+
+
+#———————————————————————————————————————————
+# SUMMARIZE GROUPED DATASET
+#———————————————————————————————————————————
+
+
+def summarize_processed_data(
+    ds_orig : xr.Dataset,
+    gdf : gpd.GeoDataFrame,
+    params_process: dict,
+):
+    """
+    Add a layer to group the original pixel values into climate area values
+    Args:
+        - ds : (xr.Dataset) Dataset with Soil Water Content data
+        - gdf : (gpd.GeoDataFrame) GeoDataFrame with geometries
+        - params_s : (dict) Dictionary with parameters to process data
+    Returns:
+        - pd.DataFrame with processed data
+        - xr.Dataset with climatologies
+    """
+    variable = params_process['variable']
+    add_abs_anom = params_process.get('add_abs_anom', True)
+    mode = params_process.get('summarize_mode', 'within')
+    k_neighbors = params_process.get('k_neighbors', 1)
+
+    # Resolve dict-style variable (Planet config) to the value present in dataset
+    if isinstance(variable, dict):
+        variable = next(
+            (v for v in variable.values() if v in ds_orig.data_vars),
+            list(variable.values())[0]
+        )
+
+    ds = ds_orig.copy()
+    # Subset climate area geometry
+    LOCATION_NAME = 'location_id'
+    gdf_aoi = gdf.to_crs(epsg='4326')
+
+    def nearest_method(ds, gdf_aoi, LOCATION_NAME, check_var, k):
+        lon, lat, time =  get_coordinates(ds)
+        ds_clean, df_clusters = create_cluster_coord(ds, gdf_aoi, LOCATION_NAME, method='nearest', check_var=check_var, k=k)
+        ds_sum = summarize_data(ds_clean, group_coords=['points'])
+        print(f"Nearest neighbors selection done")
+
+        df_sum = ds_sum.reset_index('points').to_dataframe()
+        df_sum = df_sum.reset_index().drop(columns='points', errors='ignore')
+
+        # Round coordinates to avoid float-precision mismatches between
+        # df_clusters (numpy source) and df_sum (xarray reset_index source)
+        _PREC = 6
+        df_key = df_clusters[[lon, lat, LOCATION_NAME]].copy()
+        df_key[lon] = df_key[lon].round(_PREC)
+        df_key[lat] = df_key[lat].round(_PREC)
+        if lon in df_sum.columns:
+            df_sum[lon] = df_sum[lon].round(_PREC)
+        if lat in df_sum.columns:
+            df_sum[lat] = df_sum[lat].round(_PREC)
+
+        # Append location var to dataframe using coordinates
+        merge_on = [c for c in [lon, lat] if c in df_sum.columns]
+        df_sum = df_key.merge(
+            df_sum,
+            how='right',
+            on=merge_on
+        ).drop(columns=[lon, lat], errors='ignore')
+
+        return df_sum, df_clusters
+
+    # Summarize the arrays along a specified dimension
+    if mode == 'nearest':
+        df_sum, df_clusters = nearest_method(ds, gdf_aoi, LOCATION_NAME, variable, k=k_neighbors)
+        print(f"Clustering with nearest neighbor strategy done")
+
+    elif mode == 'within':
+        ds_clean, df_clusters = create_cluster_coord(ds, gdf_aoi, LOCATION_NAME) #Using v2 is faster since it applies a spatial join
+        ds_sum = summarize_data(ds_clean, group_coords=[LOCATION_NAME])
+        print(f"Clustering and summarizing done using within strategy")
+
+        df_sum = ds_sum.to_dataframe().reset_index()
+        # Filter locations with all nans
+        df_sum = df_sum.groupby(LOCATION_NAME).filter(lambda x: x[variable].count() !=0)
+
+        # Assign pixels to left out geometries due to their size
+        list_out = list(set(gdf_aoi[LOCATION_NAME].values) - set(df_sum[LOCATION_NAME].unique()))
+        if len(list_out)>0:
+            print(f"Applying nearest strategy for {len(list_out)} polygons")
+            gdf_out = gdf_aoi[gdf_aoi[LOCATION_NAME].isin(list_out)]
+
+            df_sum_out, df_clusters_out = nearest_method(ds, gdf_out, LOCATION_NAME, variable, k=k_neighbors)
+
+            # Concatenate both datasets
+            df_sum = pd.concat([df_sum, df_sum_out], axis=0, ignore_index=True)
+            df_clusters = pd.concat([df_clusters, df_clusters_out], axis=0, ignore_index=True)
+    
+    elif mode == 'pixel':
+        ds_clean, df_clusters = create_cluster_coord(ds, gdf_aoi, LOCATION_NAME, method='within')
+        lon, lat, time =  get_coordinates(ds_clean)
+        df_sum = ds_clean.to_dataframe().reset_index()
+        df_sum = df_sum.dropna(subset=[LOCATION_NAME])
+        df_sum['pixel_id'] = (
+            np.round(df_sum[lon].values, 3).astype(str)
+            + '_'
+            + np.round(df_sum[lat].values, 3).astype(str)
+        )
+    
+    if add_abs_anom:
+        df_sum[f'neg_anom_{variable}'] = np.where(
+            df_sum[f'anom_{variable}'] >=0, 0, df_sum[f'anom_{variable}'] * (-1)
+        )
+        df_sum[f'pos_anom_{variable}'] = np.where(
+            df_sum[f'anom_{variable}'] <=0, 0, df_sum[f'anom_{variable}']
+        )
+
+    return df_sum, df_clusters
+
 
 ########____GENERATE ACCUMULATED ANOMALIES____########
  
@@ -271,172 +466,110 @@ def _layered_payout(p, levels, tail='lower'):
 ########____GENERATE OUTPUT____########
 
 
-def generate_triggers(
-    df_hist: pd.DataFrame,
-    params: dict,
-    params_request: dict,
-):
-    """
-    Generate triggers
-    Args:
-        - df_hist : (pd.DataFrame) DataFrame with historical dataset of indices
-        - params : (dict) Dictionary with parameters to compute triggers
-    Returns:
-        - pd.DataFrame DataFrame with percentiles, triggers and activation flags
-        - pd.DataFrame Original DataFrame
-    """
-    windows = params['windows']
-    variable = params['variable']
-    group_cols = params.get('group_cols', 'location_id')
-
-    # If the configured variable doesn't exist in the dataframe, fall back to
-    # the first anom_* column (handles ERA5 vs Planet naming differences)
-    if variable not in df_hist.columns:
-        anom_cols = [c for c in df_hist.columns if c.startswith('anom_')]
-        if anom_cols:
-            import logging
-            logging.getLogger(__name__).warning(
-                f"create_trigger variable '{variable}' not found in dataframe; "
-                f"using '{anom_cols[0]}' instead."
-            )
-            variable = anom_cols[0]
-    percentile_dict = params['percentile_dict']
-    dist = params['dist']
-
-    if params_request.get('lead_id', None) is not None:
-        df_hist['lead_id'] = params_request['lead_id']
-        group_cols.append('lead_id')
-
-    df_hist['time'] = pd.to_datetime(df_hist['time'])
-
-    # Accumulate the values of the variable within the specified windows
-    SUM_VARIABLE = 'index_value'
-    df_cum_variable = generate_accumulated_anomalies(
-        df_hist,
-        window=windows,
-        group_cols=group_cols,
-        variable_name=variable,
-        set_variable=SUM_VARIABLE
-    )
-
-    groups = group_cols + ['crop', 'window']
-
-    if dist == 'empirical':
-        df_cum_variable, df_percentiles = get_empirical_percentiles(
-            df_cum_variable,
-            groups,
-            SUM_VARIABLE,
-            percentile_dict
-        )
-
-    else:
-        # Fit distribution and get parameters
-        df_fit = fit_distribution(
-            df_cum_variable,
-            groups,
-            SUM_VARIABLE,
-            dist
-        )
-        # Add the associated percentile values for each window
-        df_cum_variable = add_percentiles_from_params(
-            df_cum_variable,
-            df_fit,
-            groups,
-            SUM_VARIABLE
-        )
-        # Calculate trigger for each percentile value only with complete window
-        df_percentiles = calculate_triggers_from_params(
-            df_fit,
-            percentile_dict,
-            groups
-        )
-
-    # Get flags for activated windows
-    df_cum_variable = get_activation_years(
-        df_cum_variable,
-        df_percentiles,
-        groups,
-        SUM_VARIABLE,
-        percentile_dict,
-    )
-
-    df_cum_variable['empirical_loss'] = compute_layered_payout(
-        df_cum_variable['percentile'],
-        percentile_dict
-    )
-
-    return df_cum_variable, df_percentiles
-
-
 # ---- contract validation ----
 
-def _validate_tail(tail_spec, crop_name, window_key, tail_label,
-                   parent_coverage, parent_iv, parent_tlr, parent_ded):
-    """Validate and normalise a tail spec. Fills defaults from parent values.
-    continuous: levels=[p1,p2], assigns start/exit_pct by tail direction.
-    layered: levels must be a non-empty dict."""
+def _validate_monotonic_levels(levels, tail_label, window_key):
+    """Check that payout fractions move consistently with percentile keys.
+    upper: fractions must strictly increase as percentile keys increase.
+    lower: fractions must strictly decrease as percentile keys increase.
+    """
+    sorted_items = sorted(levels.items(), key=lambda kv: int(kv[0]))
+    values       = [v for _, v in sorted_items]
+
+    if tail_label == 'upper':
+        ok, direction = all(
+            values[i] < values[i + 1] for i in range(len(values) - 1)
+        ), 'increase'
+    else:  # lower
+        ok, direction = all(
+            values[i] > values[i + 1] for i in range(len(values) - 1)
+        ), 'decrease'
+
+    if not ok:
+        raise ValueError(
+            f"Window {window_key}, tail '{tail_label}': "
+            f"'levels' payout fractions must strictly {direction} as percentile "
+            f"keys increase, got {dict(sorted_items)}."
+        )
+
+
+def _validate_tail(tail_spec, window_key, tail_label,
+                   parent_tlr, parent_ded):
+    """Validate and normalise a tail spec. Fills target_loss_ratio/deductions
+    defaults from parent values. coverage and insured_value are not filled
+    here, both are priced per location from gdf_locations, not the contract.
+    Both designs take levels={percentile: payout_fraction}, checked for
+    monotonic direction by tail (upper: increasing, lower: decreasing).
+    continuous: levels must have exactly 2 entries; these are unpacked into
+    start_pct/exit_pct and min_payout/max_payout by tail direction.
+    layered: levels must be a non-empty dict (any number of entries)."""
     if tail_spec is None:
         raise ValueError(
-            f"Crop '{crop_name}', window {window_key}, tail '{tail_label}' "
-            "has no specification."
+            f"Window {window_key}, tail '{tail_label}' has no specification."
         )
- 
+
     design = tail_spec.get('design')
     if design is None:
         raise ValueError(
-            f"Crop '{crop_name}', window {window_key}, tail '{tail_label}' "
-            "must specify 'design'."
+            f"Window {window_key}, tail '{tail_label}' must specify 'design'."
         )
     if design not in ('continuous', 'layered'):
         raise ValueError(
-            f"Crop '{crop_name}', window {window_key}, tail '{tail_label}': "
+            f"Window {window_key}, tail '{tail_label}': "
             f"design must be 'continuous' or 'layered', got '{design}'."
         )
- 
+
     levels = tail_spec.get('levels')
- 
+
     if design == 'continuous':
         if levels is None:
             raise ValueError(
-                f"Crop '{crop_name}', window {window_key}, tail '{tail_label}' "
-                "(continuous) requires 'levels'."
+                f"Window {window_key}, tail '{tail_label}' (continuous) requires 'levels'."
             )
-        if not isinstance(levels, (list, tuple)):
+        if not isinstance(levels, dict):
             raise ValueError(
-                f"Crop '{crop_name}', window {window_key}, tail '{tail_label}' "
-                "(continuous) 'levels' must be a list or tuple."
+                f"Window {window_key}, tail '{tail_label}' "
+                "(continuous) 'levels' must be a dict of {percentile: payout_fraction}."
             )
         if len(levels) != 2:
             raise ValueError(
-                f"Crop '{crop_name}', window {window_key}, tail '{tail_label}' "
-                f"(continuous) 'levels' must have exactly 2 values, got {len(levels)}."
+                f"Window {window_key}, tail '{tail_label}' "
+                f"(continuous) 'levels' must have exactly 2 entries, got {len(levels)}."
             )
-        lo, hi = min(levels), max(levels)
+
+        _validate_monotonic_levels(levels, tail_label, window_key)
+
+        (k_lo, v_lo), (k_hi, v_hi) = sorted(levels.items(), key=lambda kv: int(kv[0]))
         if tail_label == 'lower':
-            tail_spec['start_pct'] = hi
-            tail_spec['exit_pct']  = lo
+            tail_spec['start_pct']  = int(k_hi)
+            tail_spec['exit_pct']   = int(k_lo)
+            tail_spec['min_payout'] = v_hi
+            tail_spec['max_payout'] = v_lo
         else:  # upper
-            tail_spec['start_pct'] = lo
-            tail_spec['exit_pct']  = hi
-        tail_spec.setdefault('max_payout', 1.0)
-        tail_spec.setdefault('min_payout', 0.0)
- 
+            tail_spec['start_pct']  = int(k_lo)
+            tail_spec['exit_pct']   = int(k_hi)
+            tail_spec['min_payout'] = v_lo
+            tail_spec['max_payout'] = v_hi
+
     elif design == 'layered':
         if not isinstance(levels, dict) or not levels:
             raise ValueError(
-                f"Crop '{crop_name}', window {window_key}, tail '{tail_label}' "
-                "(layered) 'levels' must be a non-empty dict."
+                f"Window {window_key}, tail '{tail_label}' (layered) 'levels' must be a non-empty dict."
             )
- 
-    tail_spec.setdefault('coverage',          parent_coverage)
-    tail_spec.setdefault('insured_value',     parent_iv)
+
+        _validate_monotonic_levels(levels, tail_label, window_key)
+
     tail_spec.setdefault('target_loss_ratio', parent_tlr)
     tail_spec.setdefault('deductions',        parent_ded)
  
  
 def _validate_contract(params_contract, valid_window_keys):
     """Validate params_contract and fill defaults. Cascade priority (high->low):
-    tail > window > crop > top-level > default (coverage=1.0, insured_value=1).
+    tail > window > top-level > default. coverage and insured_value are not
+    part of this cascade: both are priced per location from gdf_locations
+    (in reprice_dataframe), not from the contract. 'crop' is likewise not
+    part of the contract structure, it's a per-location attribute sourced
+    from gdf_locations and merged onto both outputs in generate_payout_policy.
     Raises ValueError on unknown window keys or missing required fields.
     """
     import copy
@@ -444,66 +577,41 @@ def _validate_contract(params_contract, valid_window_keys):
  
     specs.setdefault('target_loss_ratio', 0.74)
     specs.setdefault('deductions',        0.14)
-    specs.setdefault('coverage',          1.0)
-    specs.setdefault('insured_value',     1)
  
-    crops = specs.get('crops', {})
-    if not crops:
-        raise ValueError("params_contract must contain a non-empty 'crops' dict.")
+    windows = specs.get('windows', {})
+    if not windows:
+        raise ValueError("params_contract must contain a non-empty 'windows' dict.")
+    if not isinstance(windows, dict):
+        raise ValueError("params_contract['windows'] must be a dict {window_key: {tail_specs}}.")
+ 
+    # Cross-validate window keys
+    unknown = set(windows.keys()) - set(valid_window_keys)
+    if unknown:
+        raise ValueError(
+            f"params_contract references unknown window key(s): {unknown}. "
+            f"Valid keys: {set(valid_window_keys)}."
+        )
  
     TAIL_KEYS = {'upper', 'lower'}
  
-    for crop_name, crop_spec in crops.items():
-        if crop_spec is None:
-            raise ValueError(f"Crop '{crop_name}' has no specification.")
+    for window_key, window_spec in windows.items():
+        if window_spec is None:
+            raise ValueError(f"Window {window_key} has no specification.")
  
-        crop_spec.setdefault('coverage',      specs['coverage'])
-        crop_spec.setdefault('insured_value', specs['insured_value'])
- 
-        windows = crop_spec.get('windows')
-        if not windows:
-            raise ValueError(f"Crop '{crop_name}' must specify a non-empty 'windows' dict.")
-        if not isinstance(windows, dict):
+        present_tails = TAIL_KEYS.intersection(window_spec.keys())
+        if not present_tails:
             raise ValueError(
-                f"Crop '{crop_name}': 'windows' must be a dict "
-                f"{{window_key: {{tail_specs}}}}."
+                f"Window {window_key} must define at least one of: 'upper', 'lower'."
             )
  
-        # Cross-validate window keys
-        unknown = set(windows.keys()) - set(valid_window_keys)
-        if unknown:
-            raise ValueError(
-                f"Crop '{crop_name}' references unknown window key(s): {unknown}. "
-                f"Valid keys: {set(valid_window_keys)}."
+        for tail_label in present_tails:
+            _validate_tail(
+                tail_spec  = window_spec[tail_label],
+                window_key = window_key,
+                tail_label = tail_label,
+                parent_tlr = specs['target_loss_ratio'],
+                parent_ded = specs['deductions'],
             )
- 
-        for window_key, window_spec in windows.items():
-            if window_spec is None:
-                raise ValueError(
-                    f"Crop '{crop_name}', window {window_key} has no specification."
-                )
- 
-            window_spec.setdefault('coverage',      crop_spec['coverage'])
-            window_spec.setdefault('insured_value', crop_spec['insured_value'])
- 
-            present_tails = TAIL_KEYS.intersection(window_spec.keys())
-            if not present_tails:
-                raise ValueError(
-                    f"Crop '{crop_name}', window {window_key} must define at least "
-                    "one of: 'upper', 'lower'."
-                )
- 
-            for tail_label in present_tails:
-                _validate_tail(
-                    tail_spec     = window_spec[tail_label],
-                    crop_name     = crop_name,
-                    window_key    = window_key,
-                    tail_label    = tail_label,
-                    parent_coverage = window_spec['coverage'],
-                    parent_iv       = window_spec['insured_value'],
-                    parent_tlr      = specs['target_loss_ratio'],
-                    parent_ded      = specs['deductions'],
-                )
  
     return specs
  
@@ -511,61 +619,58 @@ def _validate_contract(params_contract, valid_window_keys):
  
 # ---- policy table (trigger thresholds) ----
  
-def _build_policy_table(fit, group_cols, params_contract, index_desc):
-    """Build df_policy. One row per (group, crop, window, tail, bound/level).
+def _build_policy_table(fit, group_cols, params_contract):
+    """Build df_policy. One row per (group, window, tail, bound/level).
     Uses fit._ppf_row for trigger values -- works for all dist types including
-    empirical, since ref_values are stored in fit.df_fit at fit time."""
-    crops   = params_contract['crops']
+    empirical, since ref_values are stored in fit.df_fit at fit time.
+    coverage, insured_value, and crop are deliberately not set here: all
+    three are per-location attributes sourced from gdf_locations (crop
+    directly, coverage/insured_value via reprice_dataframe) and get
+    merged onto df_policy afterwards in generate_payout_policy. index_desc
+    is likewise added there as a single column assignment rather than
+    per record."""
+    windows = params_contract['windows']
     records = []
  
     for _, row in fit.df_fit.iterrows():
         group_rec = row[group_cols].to_dict()
         window    = group_rec.get('window')
  
-        for crop_name, crop_spec in crops.items():
-            if window not in crop_spec['windows']:
+        if window not in windows:
+            continue
+        window_spec = windows[window]
+ 
+        for tail_label in ('upper', 'lower'):
+            if tail_label not in window_spec:
                 continue
-            window_spec = crop_spec['windows'][window]
+            tail_spec = window_spec[tail_label]
+            design    = tail_spec['design']
+            base      = {**group_rec, 'tail': tail_label}
  
-            for tail_label in ('upper', 'lower'):
-                if tail_label not in window_spec:
-                    continue
-                tail_spec = window_spec[tail_label]
-                design    = tail_spec['design']
-                coverage  = tail_spec['coverage']
-                iv        = tail_spec['insured_value']
-                base      = {**group_rec, 'crop': crop_name, 'tail': tail_label}
+            if design == 'continuous':
+                for bound, pct, frac in [
+                    ('start', tail_spec['start_pct'], tail_spec['min_payout']),
+                    ('exit',  tail_spec['exit_pct'],  tail_spec['max_payout']),
+                ]:
+                    records.append({
+                        **base,
+                        'pct':             pct,
+                        'bound':           bound,
+                        'trigger_value':   np.round(fit._ppf_row(row, pct / 100), 4),
+                        'payout_fraction': frac,
+                    })
  
-                if design == 'continuous':
-                    for bound, pct, frac in [
-                        ('start', tail_spec['start_pct'], tail_spec['min_payout']),
-                        ('exit',  tail_spec['exit_pct'],  tail_spec['max_payout']),
-                    ]:
-                        records.append({
-                            **base,
-                            'pct':             pct,
-                            'bound':           bound,
-                            'trigger_value':   np.round(fit._ppf_row(row, pct / 100), 4),
-                            'payout_fraction': frac,
-                            'coverage':        coverage,
-                            'insured_value':   iv,
-                            'index_desc':      index_desc,
-                        })
- 
-                elif design == 'layered':
-                    for pct_int, fraction in tail_spec['levels'].items():
-                        records.append({
-                            **base,
-                            'pct':             int(pct_int),
-                            'bound':           'level',
-                            'trigger_value':   np.round(
-                                fit._ppf_row(row, int(pct_int) / 100), 4
-                            ),
-                            'payout_fraction': fraction,
-                            'coverage':        coverage,
-                            'insured_value':   iv,
-                            'index_desc':      index_desc,
-                        })
+            elif design == 'layered':
+                for pct_int, fraction in tail_spec['levels'].items():
+                    records.append({
+                        **base,
+                        'pct':             int(pct_int),
+                        'bound':           'level',
+                        'trigger_value':   np.round(
+                            fit._ppf_row(row, int(pct_int) / 100), 4
+                        ),
+                        'payout_fraction': fraction,
+                    })
  
     return pd.DataFrame(records)
  
@@ -573,12 +678,12 @@ def _build_policy_table(fit, group_cols, params_contract, index_desc):
 # ---- payout schedule ----
  
 def compute_payout_schedule(df_cum, group_cols, params_contract):
-    """Compute per-year payouts and pricing for each (crop, window, tail).
+    """Compute per-year payouts and pricing for each (window, tail).
     Rate columns are pure fractions (no IV scaling). total_payout and
     total_premium multiply by coverage * insured_value at the final step.
     Only complete windows (flag_complete_window==1) are used.
     """
-    crops = params_contract['crops']
+    windows = params_contract['windows']
  
     if 'flag_complete_window' in df_cum.columns:
         df = df_cum.query('flag_complete_window==1').copy()
@@ -594,121 +699,106 @@ def compute_payout_schedule(df_cum, group_cols, params_contract):
  
     chunks = []
  
-    for crop_name, crop_spec in crops.items():
-        for window_key, window_spec in crop_spec['windows'].items():
-            df_win = df_base[df_base['window'] == window_key].copy()
-            if df_win.empty:
+    for window_key, window_spec in windows.items():
+        df_win = df_base[df_base['window'] == window_key].copy()
+        if df_win.empty:
+            continue
+ 
+        for tail_label in ('upper', 'lower'):
+            if tail_label not in window_spec:
                 continue
+
+            tail_spec    = window_spec[tail_label]
+            design       = tail_spec['design']
+            tlr          = tail_spec['target_loss_ratio']
+            ded          = tail_spec['deductions']
+
+            df_tail           = df_win.copy()
+            df_tail['tail']   = tail_label
+            df_tail['design'] = design
+            df_tail['levels'] = str(tail_spec['levels'])
  
-            df_win['crop'] = crop_name
+            # ---- payout_pct: raw fraction, no IV ----
+            if design == 'continuous':
+                start_pct = tail_spec['start_pct']
+                exit_pct  = tail_spec['exit_pct']
+                max_p     = tail_spec['max_payout']
+                min_p     = tail_spec['min_payout']
  
-            for tail_label in ('upper', 'lower'):
-                if tail_label not in window_spec:
-                    continue
- 
-                tail_spec    = window_spec[tail_label]
-                design       = tail_spec['design']
-                tlr          = tail_spec['target_loss_ratio']
-                ded          = tail_spec['deductions']
-                coverage = tail_spec['coverage']
-                iv       = tail_spec['insured_value']
- 
-                df_tail           = df_win.copy()
-                df_tail['tail']   = tail_label
-                df_tail['design'] = design
- 
-                # ---- perc_payout: raw fraction, no IV ----
-                if design == 'continuous':
-                    start_pct = tail_spec['start_pct']
-                    exit_pct  = tail_spec['exit_pct']
-                    max_p     = tail_spec['max_payout']
-                    min_p     = tail_spec['min_payout']
- 
-                    df_tail['perc_payout'] = np.round(
-                        _continuous_payout(
-                            df_tail['_pct100'], start_pct, exit_pct,
-                            max_p, min_p, tail_label
-                        ), 10
-                    )
-                    # Area under the ramp (trapezoid):
-                    #   rectangle height min_p over the activation probability,
-                    #   plus triangle (max_p - min_p) over half that probability.
-                    # lower: activation prob = start_pct / 100 (left tail)
-                    # upper: activation prob = (100 - start_pct) / 100 (right tail)
-                    if tail_label == 'lower':
-                        act_prob         = start_pct / 100
-                        exit_prob        = exit_pct  / 100
-                        ramp_width       = act_prob - exit_prob
-                        pure_premium_pct = (
-                            min_p * act_prob
-                            + (max_p - min_p) * (act_prob + exit_prob) / 2
-                        )
-                    else:
-                        act_prob         = (100 - start_pct) / 100
-                        exit_prob        = (100 - exit_pct)  / 100
-                        ramp_width       = act_prob - exit_prob
-                        pure_premium_pct = (
-                            min_p * act_prob
-                            + (max_p - min_p) * (act_prob + exit_prob) / 2
-                        )
- 
-                elif design == 'layered':
-                    levels = tail_spec['levels']
-                    df_tail['perc_payout'] = np.round(
-                        _layered_payout(df_tail['_pct100'], levels, tail_label), 10
-                    )
-                    level_list = [(int(k), v) for k, v in levels.items()]
-                    if tail_label == 'lower':
-                        sorted_levels = sorted(level_list, key=lambda x: x[0], reverse=True)
-                        fractions     = [0.0] + [f for _, f in sorted_levels]
-                        thresholds    = [t / 100 for t, _ in sorted_levels] + [0.0]
-                    else:
-                        sorted_levels = sorted(level_list, key=lambda x: x[0])
-                        fractions     = [0.0] + [f for _, f in sorted_levels]
-                        thresholds    = [(1 - t / 100) for t, _ in sorted_levels] + [0.0]
-                    pure_premium_pct = sum(
-                        (fractions[i + 1] - fractions[i]) * thresholds[i]
-                        for i in range(len(sorted_levels))
-                    )
- 
-                # ---- pricing: coverage/IV-agnostic rates ----
-                df_tail['pure_premium_pct']  = np.round(pure_premium_pct, 10)
-                df_tail['target_loss_ratio'] = tlr
-                df_tail['re_premium_pct']    = np.round(pure_premium_pct / tlr, 10)
-                df_tail['deductions']        = ded
-                df_tail['gross_premium_pct'] = np.round(
-                    df_tail['re_premium_pct'] * (1 + ded), 10
+                df_tail['payout_pct'] = np.round(
+                    _continuous_payout(
+                        df_tail['_pct100'], start_pct, exit_pct,
+                        max_p, min_p, tail_label
+                    ), 10
+                )
+                # Area under the ramp (trapezoid): rectangle height min_p
+                # over the activation probability, plus triangle
+                # (max_p - min_p) over half that probability.
+                # lower: activation prob = start_pct / 100 (left tail)
+                # upper: activation prob = (100 - start_pct) / 100 (right tail)
+                if tail_label == 'lower':
+                    act_prob  = start_pct / 100
+                    exit_prob = exit_pct  / 100
+                else:
+                    act_prob  = (100 - start_pct) / 100
+                    exit_prob = (100 - exit_pct)  / 100
+                pure_premium_pct = (
+                    min_p * act_prob
+                    + (max_p - min_p) * (act_prob + exit_prob) / 2
                 )
  
-                # ---- reference scalars + absolute columns ----
-                df_tail['coverage']      = coverage
-                df_tail['insured_value'] = iv
-                df_tail['total_premium'] = np.round(
-                    df_tail['gross_premium_pct'] * coverage * iv, 2
+            elif design == 'layered':
+                levels = tail_spec['levels']
+                df_tail['payout_pct'] = np.round(
+                    _layered_payout(df_tail['_pct100'], levels, tail_label), 10
                 )
-                df_tail['total_payout'] = np.round(
-                    df_tail['perc_payout'] * coverage * iv, 2
+                level_list = [(int(k), v) for k, v in levels.items()]
+                if tail_label == 'lower':
+                    sorted_levels = sorted(level_list, key=lambda x: x[0], reverse=True)
+                    fractions     = [0.0] + [f for _, f in sorted_levels]
+                    thresholds    = [t / 100 for t, _ in sorted_levels] + [0.0]
+                else:
+                    sorted_levels = sorted(level_list, key=lambda x: x[0])
+                    fractions     = [0.0] + [f for _, f in sorted_levels]
+                    thresholds    = [(1 - t / 100) for t, _ in sorted_levels] + [0.0]
+                pure_premium_pct = sum(
+                    (fractions[i + 1] - fractions[i]) * thresholds[i]
+                    for i in range(len(sorted_levels))
                 )
  
-                chunks.append(df_tail)
+            # ---- pricing: coverage/IV-agnostic rates ----
+            df_tail['pure_premium_pct']  = np.round(pure_premium_pct, 10)
+            df_tail['target_loss_ratio'] = tlr
+            df_tail['re_premium_pct']    = np.round(pure_premium_pct / tlr, 10)
+            df_tail['deductions']        = ded
+            df_tail['gross_premium_pct'] = np.round(
+                df_tail['re_premium_pct'] * (1 + ded), 10
+            )
+ 
+            # coverage, insured_value, and crop are NOT set here: all
+            # three are per-location attributes that come in via the
+            # gdf_locations merge in reprice_dataframe. Setting a
+            # placeholder here would collide with that merge (pandas
+            # would suffix _x/_y instead of using the real value).
+ 
+            chunks.append(df_tail)
  
     if not chunks:
         raise ValueError(
-            "No rows matched any (crop, window, tail) combination in params_contract. "
-            "Check that window keys in params_contract crops exist in "
-            "params_trigger['windows']."
+            "No rows matched any (window, tail) combination in params_contract. "
+            "Check that window keys in params_contract['windows'] exist in "
+            "params_indices['windows']."
         )
  
     df_payouts = pd.concat(chunks, axis=0, ignore_index=True)
     df_payouts = df_payouts.drop(columns=['_pct100'])
  
-    non_group = ['crop', 'window_year', 'tail', 'design',
-                 'start_date', 'end_date',
-                 'index_value', 'index_desc', 'percentile', 'perc_payout',
-                 'pure_premium_pct', 'target_loss_ratio', 're_premium_pct',
-                 'deductions', 'gross_premium_pct',
-                 'coverage', 'insured_value',
-                 'total_premium', 'total_payout']
+    non_group = [
+        'window_year', 'tail', 'design', 'levels', 'start_date', 'end_date',
+        'index_value', 'index_desc', 'percentile', 'payout_pct',
+        'pure_premium_pct', 'target_loss_ratio', 're_premium_pct',
+        'deductions', 'gross_premium_pct',
+    ]
     col_order = group_cols + non_group
     return df_payouts[[c for c in col_order if c in df_payouts.columns]]
  
@@ -718,7 +808,7 @@ def compute_payout_schedule(df_cum, group_cols, params_contract):
  
 def create_index_values(
     df_orig: pd.DataFrame,
-    params_trigger: dict,
+    params_indices: dict,
 ):
     """Accumulate variable into windows, fit distribution, assign percentiles.
     Returns (df_cum, fit). df_cum has one row per (group, window_year, window)
@@ -726,11 +816,11 @@ def create_index_values(
  
     params_trigger keys: variable, windows, group_cols, dist, start_time.
     """
-    variable   = params_trigger['variable']
-    windows    = params_trigger['windows']
-    group_cols = list(params_trigger.get('group_cols', ['location_id']))
-    dist       = params_trigger.get('dist', 'empirical')
-    start_time = params_trigger.get('start_time', None)
+    variable   = params_indices['variable']
+    windows    = params_indices['windows']
+    group_cols = list(params_indices.get('group_cols', ['location_id']))
+    dist       = params_indices.get('dist', 'empirical')
+    start_time = params_indices.get('start_time', None)
  
     df_hist         = df_orig.copy()
     df_hist['time'] = pd.to_datetime(df_hist['time'])
@@ -752,35 +842,116 @@ def create_index_values(
  
     return df_cum, fit
  
+
+def reprice_dataframe(df_payouts_orig, gdf_locations_orig):
+    """Prices payouts/premium/insured_value in absolute terms from the
+    lead's actual value_amount/rate/term/target_premium, joined in from
+    gdf_locations. This is the only place insured_value is computed;
+    compute_payout_schedule deliberately leaves it out."""
+    df_payouts = df_payouts_orig.copy()
+    gdf_locations = gdf_locations_orig.copy()
+    df_aux = df_payouts.merge(
+        gdf_locations.drop(columns=['geometry']),
+        how = 'inner', 
+        on = ['location_id']
+    )
+    df_aux['period'] = df_aux['start_date'].dt.strftime('%b %d') + ' - ' + df_aux['end_date'].dt.strftime('%b %d')
+    
+    has_premium = ~df_aux['target_premium'].isna()
+    is_loan = df_aux['value_type']=='Loan Amount'
+    
+    df_aux['insured_value'] = np.where(
+        has_premium, df_aux['target_premium'] / (df_aux['coverage'] * df_aux['gross_premium_pct']),
+        np.where(
+            is_loan,
+            df_aux['value_amount'] * (1/df_aux['term'] + df_aux['rate']),
+            df_aux['value_amount']
+        )
+    )
+
+    df_aux['premium'] = np.where(
+        has_premium, df_aux['target_premium'],
+        np.where(
+            is_loan,
+            df_aux['insured_value'] * df_aux['coverage'] * df_aux['gross_premium_pct'],
+            df_aux['insured_value'] * df_aux['coverage'] * df_aux['gross_premium_pct'] * df_aux['size_ha'],
+        )
+    )
+    df_aux['payout'] = np.where(
+        is_loan, 
+        df_aux['insured_value'] * df_aux['coverage'] * df_aux['payout_pct'],
+        df_aux['insured_value'] * df_aux['coverage'] * df_aux['payout_pct'] * df_aux['size_ha'],
+    )
+    return df_aux
  
+
 def generate_payout_policy(
     df_cum: pd.DataFrame,
     fit,
     params_request: dict,
-    params_trigger: dict,
+    params_indices: dict,
     params_contract: dict,
+    gdf_locations: gpd.GeoDataFrame,
 ):
     """Compute payout and pricing schedule from pre-fitted percentiles.
  
     Returns (df_payouts, df_policy).
-      df_payouts : one row per (group, crop, window_year, window, tail).
-      df_policy  : trigger thresholds with coverage, insured_value, index_desc.
+      df_payouts : one row per (group, window_year, window, tail).
+      df_policy  : trigger thresholds with coverage, insured_value, crop,
+                   index_desc, period. coverage, insured_value, and crop
+                   all come from gdf_locations, not from params_contract
+                   (crop directly, coverage/insured_value via
+                   reprice_dataframe), so they're pulled onto df_policy
+                   rather than set independently there.
     lead_id from params_request is prepended to both if provided.
     Window keys in params_contract are cross-validated before any computation.
     """
-    group_cols = list(params_trigger.get('group_cols', ['location_id']))
+    group_cols = list(params_indices.get('group_cols', ['location_id']))
     lead_id    = params_request.get('lead_id', None)
     index_desc = df_cum['index_desc'].iloc[0] if 'index_desc' in df_cum.columns else 'cum_index'
+    windows    = params_indices['windows']
  
     # Cross-validate window keys before any computation
-    valid_window_keys = set(params_trigger['windows'].keys())
-    params_contract   = _validate_contract(params_contract, valid_window_keys)
+    valid_window_keys = set(windows.keys())
+    params_contract    = _validate_contract(params_contract, valid_window_keys)
  
     groups = group_cols + ['window']
  
-    df_policy = _build_policy_table(fit, groups, params_contract, index_desc)
- 
+    df_policy  = _build_policy_table(fit, groups, params_contract)
     df_payouts = compute_payout_schedule(df_cum, groups, params_contract)
+    df_payouts = reprice_dataframe(df_payouts, gdf_locations)
+ 
+    # index_desc: one column assignment instead of repeating the same
+    # scalar into every record dict inside _build_policy_table.
+    df_policy['index_desc'] = index_desc
+ 
+    # period: derived straight from the MM-DD window definitions rather
+    # than from realized dates, since a policy row represents the
+    # recurring window itself, not one year's occurrence of it. Formatted
+    # to match df_payouts' period column ('%b %d' on each side).
+    period_by_window = {
+        code: (
+            pd.Timestamp(2000, *map(int, lapse[0].split('-'))).strftime('%b %d')
+            + ' - ' +
+            pd.Timestamp(2000, *map(int, lapse[1].split('-'))).strftime('%b %d')
+        )
+        for code, lapse in windows.items()
+    }
+    df_policy['period'] = df_policy['window'].map(period_by_window)
+ 
+    # crop: sourced directly from gdf_locations (one crop per location_id),
+    # Joined in before pricing_lookup, since pricing_lookup's key now
+    # includes crop and needs it to already be on df_policy.
+    df_policy = df_policy.merge(
+        gdf_locations[['location_id', 'crop']], on='location_id', how='left'
+    )
+ 
+    # coverage and insured_value: both come from gdf_locations, only
+    # reprice_dataframe has that joined in. Pull the deduplicated, repriced
+    pricing_lookup = df_payouts[groups + ['crop', 'tail', 'coverage', 'insured_value']].drop_duplicates(
+        subset=groups + ['crop', 'tail']
+    )
+    df_policy = df_policy.merge(pricing_lookup, on=groups + ['crop', 'tail'], how='left')
  
     if lead_id is not None:
         df_policy.insert(0, 'lead_id', lead_id)

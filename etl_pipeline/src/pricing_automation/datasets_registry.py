@@ -242,6 +242,11 @@ class ZarrPartitionedDataset(AbstractDataset):
     def _save(self, data: Dict[str, xr.Dataset]) -> None:
         for partition_id, ds in data.items():
             store = self._resolve(partition_id)
+            for var in ds.variables:
+                ds[var].encoding.pop("chunks", None)
+                ds[var].encoding.pop("preferred_chunks", None)
+            
+            ds = ds.chunk({dim: -1 for dim in ds.dims})
             ds.to_zarr(store, **self._save_args)
 
     def _exists(self) -> bool:

@@ -99,7 +99,7 @@ def simplify_gdf(gdf: gpd.GeoDataFrame, max_vertices: int, **kwargs) -> gpd.GeoD
     )
     return gdf
 
-
+'''
 def get_aoi(
     gdf: gpd.GeoDataFrame, 
     params_s: dict = {}
@@ -140,10 +140,85 @@ def get_aoi(
     if simplify:
         gdf_aoi = simplify_gdf(gdf_aoi, max_vertices=1400)
         
-    gdf_aoi = add_area_column(gdf_aoi, name_var='area_km2')
+    gdf_aoi['area_km2'] = get_area_column(gdf_aoi, 'km2')
     
     return BoundingBox(**dict_s).to_dict(), gdf_aoi
+'''
+def register_geometry(
+    gdf: gpd.GeoDataFrame,
+    params_s: dict = {}
+) -> gpd.GeoDataFrame:
+    """
+    Reprojects and registers the full administrative geometry, assigning
+    location_id consistently across the whole dataset. Runs once per
+    country/region in the from_request pipeline only. Its output is
+    reused by every lead that subsets it in create_aoi_geometry, so
+    location_id stays stable regardless of which subset a lead requests.
 
+    Args:
+        - gdf: (gpd.GeoDataFrame) raw administrative boundaries (gdf_request)
+        - params_s: (dict) spatial parameters passed to create_geodataframe
+    Returns:
+        - gpd.GeoDataFrame: registered geometry with stable location_id
+    """
+    if gdf.crs is not None and gdf.crs.to_epsg() != 4326:
+        gdf = gdf.to_crs(epsg=4326)
+
+    return create_geodataframe(gdf, params_s)
+
+
+def create_aoi_geometry(
+    params_s: dict = {},
+    gdf: gpd.GeoDataFrame = None,
+) -> gpd.GeoDataFrame:
+    """
+    Produces the final, per-lead AOI geometry with area_km2. Subsets the
+    registered geometry (if provided) or builds a bbox polygon directly
+    from params_s. Runs per lead, on top of register_geometry's output.
+
+    Args:
+        - params_s: (dict) spatial parameters. Must contain
+          minx/miny/maxx/maxy when gdf is None or override_gdf is True.
+        - gdf: (gpd.GeoDataFrame | None) output of register_geometry, or None
+    Returns:
+        - gpd.GeoDataFrame: final sliced AOI geometry with area_km2
+    """
+    override = params_s.get('override_gdf', False)
+
+    if gdf is None or override:
+        dict_s = get_bounds(**params_s)
+        polygon = box(dict_s['minx'], dict_s['miny'], dict_s['maxx'], dict_s['maxy'])
+        gdf_aoi = gpd.GeoDataFrame(geometry=[polygon], crs="EPSG:4326")
+        gdf_aoi['location_id'] = 'ID-000'
+    else:
+        gdf_aoi = subset_geometry(gdf, params_s)
+        if len(gdf_aoi) == 0:
+            raise AssertionError('Warning: Geometry slice has no elements')
+
+    if params_s.get('simplify', False):
+        gdf_aoi = simplify_gdf(gdf_aoi, max_vertices=1400)
+
+    gdf_aoi['area_km2'] = get_area_column(gdf_aoi, 'km2')
+
+    return gdf_aoi
+
+
+def get_aoi_bounds(
+    gdf_aoi: gpd.GeoDataFrame
+) -> dict:
+    """
+    Returns the bounding box as BoundingBox(...).to_dict(), read directly
+    off the final AOI geometry produced by create_aoi_geometry.
+
+    Args:
+        - gdf_aoi: (gpd.GeoDataFrame) output of create_aoi_geometry
+    Returns:
+        - dict: bounding box
+    """
+    minx, miny, maxx, maxy = gdf_aoi.total_bounds
+    dict_s = get_bounds(minx, maxx, maxy, miny, 10)
+
+    return BoundingBox(**dict_s).to_dict()
 
 #——————————————————————————————————————————————
 # DATA REQUEST CLASSES

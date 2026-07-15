@@ -5,16 +5,6 @@ from .utils import *
 #———————————————————————————————————————————
 
 
-def get_time_coordinate(ds):
-    """Identify the time dimension name in an xarray Dataset."""
-    for name in ds.sizes.keys():
-        if ds[name].dtype.kind == 'M':  # numpy datetime64
-            return name
-    for name in ds.sizes.keys():
-        if hasattr(ds[name], 'dt'):
-            return name
-    raise ValueError(f"No time coordinate found in dataset. Coordinates: {list(ds.sizes)}")
-
 def add_time_coordinate(ds_orig, level='week', time_dim=None, n_days=7):
     """Add one or more climatology grouping coordinates.
     `level` may be a single level or a list. Each is added via the original
@@ -64,6 +54,7 @@ RENAME_DICT = {
     'prcp': ['prcp', 'tp', 'total_precipitation', 'precipitation', 'precip', 'prc', 'pcp'],
     'tmin': ['tmin', 't2m', '2t', 't', 'mn2t6', 'mn2t', 'mn2t24'],
     'tmax': ['tmax', 't2m', '2t', 't', 'mx2t6', 'mx2t', 'mx2t24'],
+    'wind': ['wind_speed', 'wind'],
 }
 
 def rename_vars(ds_orig, variable=None):

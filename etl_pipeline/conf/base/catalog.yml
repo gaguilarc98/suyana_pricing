@@ -15,50 +15,32 @@ _arg:
   version: ${runtime_params:version, ${globals:version}}
 
 # Geometry Data
-gdf_request:
+gdf_country:
   type: geopandas.GenericDataset
-  filepath: ${globals:data_path}/geometries/${_arg.country}_${_arg.region}_polygons.parquet #${globals:data_path}
+  filepath: ${globals:data_path}/geometries/${_arg.country}_total_polygons.parquet #${globals:data_path}
   file_format: parquet
   save_args:
     compression: GZIP
 
-# Planet source data (pre-existing in S3, partitioned by location_id)
-planet_amsre:
-  type: pricing_automation.datasets_registry.ZarrPartitionedDataset
-  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/sources/PLANET_AMSRE_swc_<partition>.zarr
-  load_args:
-    combine: by_coords
-    parallel: true
-
-planet_amsr2:
-  type: pricing_automation.datasets_registry.ZarrPartitionedDataset
-  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/sources/PLANET_AMSR2_swc_<partition>.zarr
-  load_args:
-    combine: by_coords
-    parallel: true
-
-era5_gap:
-  type: pricing_automation.datasets_registry.ZarrPartitionedDataset
-  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/sources/ERA5_swc_<partition>.zarr
-  load_args:
-    combine: by_coords
-    parallel: true
-
-# Geometry Data:
-dict_bounds:
-  type: MemoryDataset
-  #type: json.JSONDataset  # Note: Use JSONDataSet from kedro_datasets
-  #filepath: data/${_arg.country}/my_data.json
-  
-gdf_aoi:
+gdf_request:
   type: geopandas.GenericDataset
-  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/geometries/location_geometries.parquet 
-  file_format: parquet #Important if not provided kedro will attempt to use GDAL which does not support S3 natively
+  filepath: ${globals:data_path}/geometries/${_arg.country}_registered_geometries.parquet
+  file_format: parquet
   save_args:
     compression: GZIP
 
-# Request data
+gdf_aoi:
+  type: geopandas.GenericDataset
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/geometries/location_geometries.parquet #gdf_aoi.parquet
+  file_format: parquet
+  save_args:
+    compression: GZIP
 
+dict_bounds:
+  type: json.JSONDataset  # Note: Use JSONDataSet from kedro_datasets
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/bounding_box.json
+
+# Request data
 ds_request:
   type: pricing_automation.datasets_registry.ZarrPartitionedDataset
   filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/sources/${_arg.provider}_${_arg.field}_<partition>.zarr
@@ -80,7 +62,7 @@ ds_processed:
     mode: w
     zarr_format: 2
     append_dim: time
-    chunks: {'time': -1, 'lat': -1, 'lon': -1}
+    chunks: {'time': -1, 'lat': 40, 'lon': 40}
     safe_chunks: false
   load_args:
     consolidated: true
@@ -96,6 +78,14 @@ ds_climatology:
     consolidated: true
 
 # Summarized Data
+data_lead_specs:
+  type: geopandas.GenericDataset
+  #type: pandas.ParquetDataset
+  filepath: data/inputs/${_arg.lead_id}_specs.parquet 
+  file_format: parquet #Important if not provided kedro will attempt to use GDAL which does not support S3 natively
+  save_args:
+    compression: GZIP
+
 gdf_locations:
   type: geopandas.GenericDataset
   filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/geometries/${_arg.lead_id}_location_properties.parquet 
@@ -203,6 +193,13 @@ plt_trigger_freq_map:
     bbox_inches: tight
     dpi: 150
 
+plt_context:
+  type: matplotlib.MatplotlibDataset
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/displays/${_arg.lead_id}/location_context.png
+  save_args:
+    bbox_inches: tight
+    dpi: 150
+
 plt_anomaly_timeseries:
   type: matplotlib.MatplotlibDataset
   filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/displays/${_arg.lead_id}/anomaly_timeseries.png
@@ -220,6 +217,20 @@ plt_activation_map:
 plt_time_series:
   type: matplotlib.MatplotlibDataset
   filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/displays/${_arg.lead_id}/indices_timeseries.png
+  save_args:
+    bbox_inches: tight
+    dpi: 150
+
+plt_intensity_map:
+  type: matplotlib.MatplotlibDataset
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/displays/${_arg.lead_id}/intensity_map.png
+  save_args:
+    bbox_inches: tight
+    dpi: 150
+
+plt_annual_payouts:
+  type: matplotlib.MatplotlibDataset
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/displays/${_arg.lead_id}/annual_payouts.png
   save_args:
     bbox_inches: tight
     dpi: 150

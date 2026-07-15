@@ -87,6 +87,16 @@ PERIL_CONFIGS: dict[tuple, dict] = {
         frequency="1_hourly",
         #time=["18"],
     ),
+    ("ERA5", "wind"): dict(
+        product_type="reanalysis-era5-land",
+        variable=["10m_u_component_of_wind", "10m_v_component_of_wind"],
+        time=[str(h).rjust(2, '0') for h in np.arange(0,24,6)],
+    ),
+    ("PLANET", "swc"): dict(
+        product_type="reanalysis-era5-land",
+        variable=["volumetric_soil_water_layer_1"],
+        time=["08"],
+    ),
 }
 
 
