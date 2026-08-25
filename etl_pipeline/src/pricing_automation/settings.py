@@ -45,6 +45,9 @@ CONFIG_LOADER_ARGS = {
     },
     "custom_resolvers": {
         "oc.env": oc.env,
+    },
+    "merge_strategy": {
+        "parameters": "soft",
     }
 }
 

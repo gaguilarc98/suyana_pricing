@@ -5,9 +5,8 @@ _arg:
   lead_id: ${runtime_params:lead_id, 'test1'}
   provider: ${runtime_params:provider, ${globals:provider}}
   field: ${runtime_params:field, ${globals:field}}
-  start_year: ${runtime_params:start_year, 2006}
+  start_year: ${runtime_params:start_year, 1996}
   end_year: ${runtime_params:end_year, 2025}
-  start_indices_at: ${runtime_params:start_indices_at, '2010-01-01'}
   target_loss_ratio: ${runtime_params:target_loss_ratio, 0.74}
   deductions: ${runtime_params:deductions, 0.175}
 
@@ -15,8 +14,7 @@ _arg:
 params_s:
   include: {}
     #AdminLvl1: ['Buenos Aires']
-  exclude: #{}
-    AdminLvl1: ['Tierra Del Fuego', 'Chubut', 'Santa Cruz']
+  exclude: {}
   simplify: false #true
   override_gdf: false
   minx: -81.74
@@ -37,37 +35,24 @@ params_request:
   field: ${_arg.field}
   data_path: ${globals:data_path}
 
-# Parameters for processing Planet data
-#params_process:
-#  variable:
-#    planet: 'swc'
-#    era5: 'swvl1'
-#  anom_variable: 'swc_adjusted'   # column name used for anomaly: anom_swc_adjusted
-#  na_replace:
-#    planet: 65535
-#    era5: null
-#  time_window:
-#    full: ['2002-06-19', '2025-01-01']
-#    planet1: ['2002-06-19', '2011-10-04']   # AMSRE period
-#    planet2: ['2012-07-02', null]            # AMSR2 period
-#    era5:    ['2011-10-04', '2012-07-02']   # Gap-fill period
-#  subset:
-#    location_var: 'location_id'
-#  interp_resolution: 0.1
-#  fill_gap_window: 30
-#  cdf_time_window: 15
-#  time_smooth_window: 30
-#  climatology_smooth_window: 30
-
+# Parameters for processing temperature data
 params_process:
   variable: ${_arg.field}
-  na_replace: -9999
+  na_replace: null
+  offset: 0
   time_window:
     - '2006-01-01'
     - '2025-12-31'
   interp_resolution: 0
   time_smooth_window: 0
-  climatology_smooth_window: 0
+  climatology_smooth_window: 7
+  func: 'quantile'
+  quantiles: [0.95]
+  umbral: 1
+  side: 'upper'
+  threshold: 60
+  pixel_window: 3
+  num_periods: 3
 
 params_lead_specs:
   lead_id: ${_arg.lead_id}
@@ -76,25 +61,27 @@ params_lead_specs:
   size_ha: 320
   rate: null
   term: null
-  target_premium: null
+  target_premium: null # optional
   crop: all
-  coverage: 1
+  coverage: 0.5
 
 params_summarize:
   variable: ${_arg.field}
-  summarize_mode: 'nearest' #'nearest' #'within'
-  add_abs_anom: true #true
+  #summarize_mode: 'nearest' #'nearest' #'within'
+  add_abs_anom: false #true
 
 # Parameters for creating triggers
 params_indices:
-  variable: 'neg_anom_swc' #'prcp'
+  variable: 'intensity_strong_wind'
   group_cols: ['location_id']
-  dist: 't' #'gamma'
-  start_time: ${_arg.start_indices_at}
-  windows:
+  dist: 'gamma'
+  start_time: '2006-01-01' # optional
+  windows: 
     1: ['09-15', '11-15']
-    #2: ['08-01', '01-31']
-
+    2: ['01-01', '03-15']
+  #windows: 
+    #1: ['08-01', '12-31'] #['05-20', '09-30']   # main growing season
+    #2: ['06-01', '10-31']   # second season (crosses year-end)
 
 # Shared pricing defaults (override per crop or tail if needed)
 params_contract:
@@ -110,11 +97,7 @@ params_contract:
         #  # inherits coverage=0.14, insured_value=7_200_000 from top level
         upper: 
           design: 'continuous' #'continuous' #
-          levels: {90: 0, 100: 1} #{90: 0, 99:1} #
-      #2:
-      #  upper: 
-      #    design: 'layered' #'continuous' #
-      #    levels: {80: 0.30, 90: 0.4, 95: 0.5} #{90: 0, 99:1} #
+          levels: {94: 0, 99: 1} #[90, 99] #
 
 # Parameters for boostrap analysis
 params_bootstrap:
@@ -125,41 +108,37 @@ params_quote:
   loading_factor: 0.05
   loss_ratio: ${_arg.target_loss_ratio}
 
+
 # Viz parameters
+params_map:
+  title: Porcentaje de compensaciones promedio # custom
+  start_year: 2014   # optional
+  subset: {}
+    #include :             # optional
+      #window: [1, 2]     # optional
+      #tail: ['upper']    # optional
+
 params_series:
   window: 1                         # required, key into params_indices['windows']
   variable: ${_arg.field}           # required, column plotted as the raw/anomaly series
-  cum_variable: anom_${_arg.field}  # required, column used for the cumulated index (bottom panel)
-  clim_variable: clim_${_arg.field} # required, climatology column plotted in top panel
-  start_time: 2010-01-01            # optional, default: None (no lower x-limit clip)
+  cum_variable: intensity_strong_wind  # required, column used for the cumulated index (bottom panel)
+  clim_variable: margin_windgust # required, climatology column plotted in top panel
+  start_time: 2020-01-01            # optional, default: None (no lower x-limit clip)
   end_time: 2025-12-31              # optional, default: None (no upper clip)
-  title: Soil Water Content index construction  # optional, default: None (no suptitle)
+  title: Strong wind index construction  # optional, default: None (no suptitle)
   #figsize: [12, 7]                  # optional, default: (12, 7)
   subset:                           # optional, default: {} (passed to subset_geometry)
-    include:                        
-      location_id: ['ID-334']
+    include: {}                       
+      #location_id: ['ID-001']
       #crop: ['all']                  # optional
       #tail: ['upper']                # optional
 
 params_intensity:
-  variable: anom_${_arg.field} # required, name of the 0/1 event variable in ds
+  variable: intensity_strong_wind # required, name of the 0/1 event variable in ds
   title: Intensity of events by year ${params_intensity.period_start} to ${params_intensity.period_end}   # optional, default: 'Event frequency by year'
   bar_label: Event intensity       # optional, default: 'Event frequency'
-  start_year: 2010                 # optional, drops years before this one
+  start_year: 2016                 # optional, drops years before this one
   mask_zeroes: false                # optional, default: false
-  period_start: "07-01"             # optional, "MM-DD"; must be paired with period_end
-  period_end: "08-31"                # optional, "MM-DD"; must be paired with period_start
+  period_start: "08-01"             # optional, "MM-DD"; must be paired with period_end
+  period_end: "12-31"                # optional, "MM-DD"; must be paired with period_start
 
-params_annual:
-  payout_col: payout              # required, column with payout values
-  title: Annual Payouts           # required, figure title
-  split_col: null                 # optional, default: None (one subplot per unique value)
-  premium_col: null               # optional, default: None (premium line/bar skipped if omitted)
-  year_col: window_year           # optional, default: 'window_year'
-  agg: sum                        # optional, default: 'mean' (e.g. 'sum', 'median')
-  payout_label: Total Payout      # optional, default: 'Pago total'
-  #premium_label: Total Premium    # optional, default: 'Prima total'
-  ylabel: USD                     # optional, default: None
-  #figsize: [12, 5]                # optional, default: (12, 5) single / (14, 3.5*n_groups) split
-  #palette: Set2                   # optional, default: 'Set2'
-  #bar: false                      # optional, default: false (premium as line vs bar)

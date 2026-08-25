@@ -13,6 +13,30 @@ from deltalake.writer import write_deltalake
 
 PROTOCOL_DELIMITER = "://"
 
+def get_coordinates(ds: xr.Dataset):
+    """Get lon, lat and time coordinates from dataset"""
+
+    lon_coord = {'lon', 'Lon', 'longitude', 'Longitude', 'x', 'X'}.intersection(set(ds.dims))
+    lat_coord = {'lat', 'Lat', 'latitude', 'Latitude', 'y', 'Y'}.intersection(set(ds.dims))
+    time_coord = {'time', 'valid_time', 'Time', 'date', 'Date'}.intersection(set(ds.dims))
+
+    if len(lon_coord)>0:
+        lon_var = lon_coord.pop()
+    else:
+        lon_var = None
+        #raise NameError('No longitude coordinate found')
+    if len(lat_coord)>0:
+        lat_var = lat_coord.pop()
+    else:
+        lat_var = None
+        #raise NameError('No latitude coordinate found')
+    if len(time_coord)>0:
+        time_var = time_coord.pop()
+    else:
+        time_var = None
+    
+    return lon_var, lat_var, time_var
+
 
 class XarrayMultiFileDataset(AbstractDataset):
     """Custom Kedro dataset to handle multiple xarray files (just for reading)"""
@@ -246,7 +270,8 @@ class ZarrPartitionedDataset(AbstractDataset):
                 ds[var].encoding.pop("chunks", None)
                 ds[var].encoding.pop("preferred_chunks", None)
             
-            ds = ds.chunk({dim: -1 for dim in ds.dims})
+            lon, lat, time = get_coordinates(ds)
+            ds = ds.chunk({time:-1, lon:60, lat: 60})#{dim: -1 for dim in ds.dims})
             ds.to_zarr(store, **self._save_args)
 
     def _exists(self) -> bool:

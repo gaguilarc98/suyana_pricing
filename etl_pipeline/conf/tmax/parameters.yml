@@ -10,32 +10,6 @@ _arg:
   target_loss_ratio: ${runtime_params:target_loss_ratio, 0.74}
   deductions: ${runtime_params:deductions, 0.175}
 
-# Parameters for aoi bounding box
-params_s:
-  include: {}
-    #AdminLvl1: ['Buenos Aires']
-  exclude: #{}
-    AdminLvl1: ['Isla De Pascua', 'Tierra Del Fuego', 'Antártica Chilena', 'Magallanes', 'Ultima Esperanza', 'Zona Sin Demarcar', 'Capitán Prat', 'Valparaíso']
-  simplify: false #true
-  override_gdf: false
-  minx: -81.74
-  maxx: -66.85
-  miny: -4.23
-  maxy: 13.39
-
-# Parameters for time slice (ERA5 pipeline)
-params_t:
-  start_year: ${_arg.start_year}
-  end_year: ${_arg.end_year}
-
-# Parameters for data retrieval
-params_request:
-  country: ${_arg.country}
-  lead_id: ${_arg.lead_id}
-  provider: ${_arg.provider}
-  field: ${_arg.field}
-  data_path: ${globals:data_path}
-
 # Parameters for processing temperature data
 params_process:
   variable: ${_arg.field}
@@ -48,9 +22,9 @@ params_process:
   time_smooth_window: 0
   climatology_smooth_window: 7
   func: 'quantile'
-  quantiles: [0.05]
-  side: 'lower'
-  threshold: 2
+  quantiles: [0.95]
+  side: 'upper'
+  threshold: 30
   pixel_window: 3
   num_periods: 3
 
@@ -73,12 +47,12 @@ params_summarize:
 
 # Parameters for creating triggers
 params_indices:
-  variable: 'intensity_cold_spell'
+  variable: 'intensity_heat_wave'
   group_cols: ['location_id']
   dist: 'gamma'
   start_time: '2006-01-01' # optional
   windows: 
-    2: ['09-15', '12-31'] #['05-20', '09-30']   # main growing season
+    1: ['08-01', '12-31'] #['05-20', '09-30']   # main growing season
     #2: ['06-01', '10-31']   # second season (crosses year-end)
 
 # Shared pricing defaults (override per crop or tail if needed)
@@ -119,11 +93,11 @@ params_map:
 params_series:
   window: 1                         # required, key into params_indices['windows']
   variable: ${_arg.field}           # required, column plotted as the raw/anomaly series
-  cum_variable: intensity_cold_spell  # required, column used for the cumulated index (bottom panel)
-  clim_variable: tmin_p05 # required, climatology column plotted in top panel
+  cum_variable: intensity_heat_wave  # required, column used for the cumulated index (bottom panel)
+  clim_variable: tmax_p95 # required, climatology column plotted in top panel
   start_time: 2020-01-01            # optional, default: None (no lower x-limit clip)
   end_time: 2025-12-31              # optional, default: None (no upper clip)
-  title: Coldspell index construction  # optional, default: None (no suptitle)
+  title: Heatwave index construction  # optional, default: None (no suptitle)
   #figsize: [12, 7]                  # optional, default: (12, 7)
   subset:                           # optional, default: {} (passed to subset_geometry)
     include: {}                       
@@ -132,7 +106,7 @@ params_series:
       #tail: ['upper']                # optional
 
 params_intensity:
-  variable: intensity_cold_spell # required, name of the 0/1 event variable in ds
+  variable: intensity_heat_wave # required, name of the 0/1 event variable in ds
   title: Intensity of events by year ${params_intensity.period_start} to ${params_intensity.period_end} # optional, default: 'Event frequency by year'
   bar_label: Event intensity       # optional, default: 'Event frequency'
   start_year: 2016                 # optional, drops years before this one

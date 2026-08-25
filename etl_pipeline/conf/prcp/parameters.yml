@@ -12,53 +12,6 @@ _arg:
   deductions: ${runtime_params:deductions, 0.175}
 
 # Parameters for aoi bounding box
-params_s:
-  include: {}
-    #AdminLvl1: ['Buenos Aires']
-  exclude: #{}
-    AdminLvl1: ['Tierra Del Fuego', 'Chubut', 'Santa Cruz']
-  simplify: false #true
-  override_gdf: false
-  minx: -81.74
-  maxx: -66.85
-  miny: -4.23
-  maxy: 13.39
-
-# Parameters for time slice (ERA5 pipeline)
-params_t:
-  start_year: ${_arg.start_year}
-  end_year: ${_arg.end_year}
-
-# Parameters for data retrieval
-params_request:
-  country: ${_arg.country}
-  lead_id: ${_arg.lead_id}
-  provider: ${_arg.provider}
-  field: ${_arg.field}
-  data_path: ${globals:data_path}
-
-# Parameters for processing Planet data
-#params_process:
-#  variable:
-#    planet: 'swc'
-#    era5: 'swvl1'
-#  anom_variable: 'swc_adjusted'   # column name used for anomaly: anom_swc_adjusted
-#  na_replace:
-#    planet: 65535
-#    era5: null
-#  time_window:
-#    full: ['2002-06-19', '2025-01-01']
-#    planet1: ['2002-06-19', '2011-10-04']   # AMSRE period
-#    planet2: ['2012-07-02', null]            # AMSR2 period
-#    era5:    ['2011-10-04', '2012-07-02']   # Gap-fill period
-#  subset:
-#    location_var: 'location_id'
-#  interp_resolution: 0.1
-#  fill_gap_window: 30
-#  cdf_time_window: 15
-#  time_smooth_window: 30
-#  climatology_smooth_window: 30
-
 params_process:
   variable: ${_arg.field}
   na_replace: -9999
@@ -82,19 +35,18 @@ params_lead_specs:
 
 params_summarize:
   variable: ${_arg.field}
-  summarize_mode: 'nearest' #'nearest' #'within'
-  add_abs_anom: true #true
+  #summarize_mode: 'nearest'
+  add_abs_anom: false #true
 
 # Parameters for creating triggers
 params_indices:
-  variable: 'neg_anom_swc' #'prcp'
+  variable: 'prcp'
   group_cols: ['location_id']
-  dist: 't' #'gamma'
+  dist: 'gamma'
   start_time: ${_arg.start_indices_at}
   windows:
-    1: ['09-15', '11-15']
+    1: ['10-01', '05-31']
     #2: ['08-01', '01-31']
-
 
 # Shared pricing defaults (override per crop or tail if needed)
 params_contract:
@@ -116,15 +68,6 @@ params_contract:
       #    design: 'layered' #'continuous' #
       #    levels: {80: 0.30, 90: 0.4, 95: 0.5} #{90: 0, 99:1} #
 
-# Parameters for boostrap analysis
-params_bootstrap:
-  n_iterations: 1000
-  seed: 42
-
-params_quote:
-  loading_factor: 0.05
-  loss_ratio: ${_arg.target_loss_ratio}
-
 # Viz parameters
 params_series:
   window: 1                         # required, key into params_indices['windows']
@@ -133,10 +76,10 @@ params_series:
   clim_variable: clim_${_arg.field} # required, climatology column plotted in top panel
   start_time: 2010-01-01            # optional, default: None (no lower x-limit clip)
   end_time: 2025-12-31              # optional, default: None (no upper clip)
-  title: Soil Water Content index construction  # optional, default: None (no suptitle)
+  title: Precipitation index construction  # optional, default: None (no suptitle)
   #figsize: [12, 7]                  # optional, default: (12, 7)
   subset:                           # optional, default: {} (passed to subset_geometry)
-    include:                        
+    include:                      
       location_id: ['ID-334']
       #crop: ['all']                  # optional
       #tail: ['upper']                # optional

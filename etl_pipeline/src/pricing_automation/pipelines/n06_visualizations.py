@@ -384,17 +384,19 @@ def plot_context(gdf_context, params_request, gdf_locations=None):
     figsize = (8,5)
     title = None
     if lead_id is not None:
-        title = ' '.join(str(lead_id).split('_')).title()
+        title = ' '.join(str(lead_id).split('_')).upper()
 
     fig, ax = plt.subplots(1, 1, figsize=figsize)
 
-    gdf_aoi_ = gdf_context.to_crs(epsg=3857)
+    gdf_aoi_ = gdf_context.drop_duplicates(subset=['geometry'])
+    gdf_aoi_ = gdf_aoi_.to_crs(epsg=3857)
     gdf_aoi_.plot(ax=ax, color='lightgray', alpha=0.75, edgecolor='black', linewidth=0.25)
 
     minx, miny, maxx, maxy = gdf_aoi_.total_bounds
 
     if gdf_locations is not None:
-        gdf_locations_ = gdf_locations.to_crs(epsg=3857)
+        gdf_locations_ = gdf_locations.drop_duplicates(subset=['geometry'])
+        gdf_locations_ = gdf_locations_.to_crs(epsg=3857)
 
         gdf_properties = gdf_locations_.drop(columns=['location_id'])
         gdf_properties = gdf_properties.sjoin_nearest(gdf_aoi_, how='left')
@@ -439,52 +441,48 @@ def plot_average_payout(
     df_payouts: pd.DataFrame,
     gdf: gpd.GeoDataFrame,
     params_map: dict,
-    params_s: dict = {},
 ):
     """
     Plot activation map showing payout_pct intensity per location per year.
     Zero payout -> midnightblue. Non-zero -> green-to-red gradient by intensity.
- 
+
     params_map keys: window, crop, tail, season_name,
-                     start_year (optional), location_var (optional).
+                     start_year (optional), location_var (optional), subset (optional).
     """
     title = params_map.get('title', 'Activation map -- | window | tail')
     params_subset = params_map.get('subset', {})
     location_var = 'location_id'
- 
-    gdf = subset_geometry(gdf, params_s)
+
     gdf = gdf.to_crs(epsg='4326')
- 
+
     df = subset_geometry(df_payouts, params_subset)
 
     data_max = df['payout_pct'].max()  # or masked.max() to ignore zeros
     vmax = data_max if data_max > 0 else 1.0
- 
+
     if 'start_year' in params_map:
         df = df[df['window_year'] >= params_map['start_year']].copy()
- 
+
     df['window_year'] = df['window_year'].astype(int)
- 
+
     # Max payout_pct per (location, year) in case of duplicates
     df = (
         df.groupby([location_var, 'window_year'])['payout_pct']
         .mean()
         .reset_index()
     )
-    print(df)
- 
+
     gdf_season = gdf.merge(df, how='inner', on=location_var)
-    print(gdf_season)
- 
+
     # Colormap: midnightblue for zero, green->red for non-zero
     cmap_grad = LinearSegmentedColormap.from_list('payout', ['darkgreen', 'gold', 'crimson'])
- 
+
     def plot_year(ax_i, gdf_year):
         """Plot a single year, splitting zero and non-zero payout polygons."""
         gdf_zero    = gdf_year[gdf_year['payout_pct'] == 0]
         gdf_nonzero = gdf_year[gdf_year['payout_pct']  > 0]
         gdf_na      = gdf_year[gdf_year['payout_pct'].isna()]
- 
+
         if not gdf_zero.empty:
             gdf_zero.plot(ax=ax_i, color='midnightblue',
                           edgecolor='black', linewidth=0.2, alpha=0.7)
@@ -495,58 +493,38 @@ def plot_average_payout(
         if not gdf_na.empty:
             gdf_na.plot(ax=ax_i, color='lightgrey',
                         edgecolor='black', linewidth=0.2, alpha=0.5)
- 
-    list_years = sorted(gdf_season['window_year'].dropna().unique().astype(int))
-    n_years    = len(list_years)
- 
-    if n_years <= 5:
-        fig, ax = plt.subplots(1, n_years, figsize=(5*n_years, 6))
-        years = np.arange(min(list_years), max(list_years)+1, 1)
-    elif n_years <= 10:
-        fig, ax = plt.subplots(2, 5, figsize=(14, 6.5))
-        years = np.arange(min(list_years), max(list_years)+1, 1)
-    elif n_years <= 15:
-        fig, ax = plt.subplots(3, 5, figsize=(18, 8.5))
-        years = np.arange(min(list_years), min(list_years) + 15, 1)
-    elif n_years <= 20:
-        fig, ax = plt.subplots(4, 5, figsize=(24, 14.5))
-        years = np.arange(min(list_years), min(list_years) + 20, 1)
-    elif n_years <= 25:
-        fig, ax = plt.subplots(5, 5, figsize=(24, 14.5))
-        years = np.arange(min(list_years), min(list_years) + 25, 1)
-    else:
-        fig, ax = plt.subplots(5, 6, figsize=(24, 14.5))
-        years = np.arange(max(list_years) - 29, max(list_years) + 1, 1)
- 
-    ax = ax.flatten()
- 
+
+    years = sorted(gdf_season['window_year'].dropna().unique().astype(int).tolist())
+    n_years = len(years)
+
+    ncols = min(5, n_years) if n_years <= 5 else 5
+    nrows = int(np.ceil(n_years / ncols))
+    fig, ax = plt.subplots(nrows, ncols, figsize=(4 * ncols, 3.2 * nrows + 1))
+    ax = np.atleast_1d(ax).flatten()
+
     for i, year in enumerate(years):
+        axi = ax[i]
         gdf_year = gdf_season[gdf_season['window_year'] == year]
-        if gdf_year.empty:
-            ax[i].axis('off')
-            continue
- 
-        plot_year(ax[i], gdf_year)
- 
-        ax[i].set_aspect('equal')# 'equal', 'auto'
-        ax[i].xaxis.set_major_formatter(FuncFormatter(format_longitude))
-        ax[i].yaxis.set_major_formatter(FuncFormatter(format_latitude))
-        ax[i].tick_params(axis='x', labelcolor='gray', labelsize=7, rotation=0)
-        ax[i].tick_params(axis='y', labelcolor='gray', labelsize=7)
-        ax[i].set_title(str(year), size=10)
- 
+
+        plot_year(axi, gdf_year)
+
+        axi.set_aspect('equal')
+        axi.xaxis.set_major_formatter(FuncFormatter(format_longitude))
+        axi.yaxis.set_major_formatter(FuncFormatter(format_latitude))
+        axi.tick_params(axis='x', labelcolor='gray', labelsize=7)
+        axi.tick_params(axis='y', labelcolor='gray', labelsize=7)
+        axi.set_title(str(year), size=10)
+
+    for j in range(n_years, len(ax)):
+        ax[j].axis('off')
+
     # Shared colorbar for non-zero payout gradient
     sm = cm.ScalarMappable(cmap=cmap_grad, norm=mcolors.Normalize(vmin=0, vmax=vmax))
     sm.set_array([])
-    cbar = fig.colorbar(sm, ax=ax, orientation='vertical', #fraction=0.02, 
-                        pad=0.02, shrink=0.6)
+    cbar = fig.colorbar(sm, ax=ax.tolist(), orientation='vertical', pad=0.02, shrink=0.6)
     cbar.set_label('Payout fraction', size=10)
- 
-    plt.suptitle(
-        title,
-        fontsize=14, y=0.96
-    )
-    #plt.tight_layout()
+
+    plt.suptitle(title, fontsize=14, y=0.96, fontweight='bold')
     plt.close(fig)
 
     return fig
@@ -849,11 +827,13 @@ def plot_intensity_map(
 
     if 'start_year' in params:
         freq = freq.sel({year_coord: freq[year_coord] >= params['start_year']})
+    if 'end_year' in params:
+        freq = freq.sel({year_coord: freq[year_coord] <= params['end_year']})
 
     years = [int(y) for y in freq[year_coord].values]
     n_years = len(years)
-    vmax = float(freq.max()) or 1.0
-    vmin = 0 or float(freq.min())
+    vmax = float(np.nanpercentile(freq, 99)) or 1.0 #freq.max()
+    vmin = 0 or float(np.nanpercentile(freq, 1)) #freq.min()
 
     ncols = min(5, n_years) if n_years <= 5 else 5
     nrows = int(np.ceil(n_years / ncols))
@@ -871,9 +851,9 @@ def plot_intensity_map(
         layer = freq.sel({year_coord: year})
 
         axi.pcolormesh(lons, lats, layer.values, cmap=cmap, norm=norm, shading='auto')
-        gdf.boundary.plot(ax=axi, edgecolor='black', linewidth=0.4)
+        gdf.boundary.plot(ax=axi, edgecolor='gray', linewidth=0.25)
         if gdf_locations is not None:
-            gdf_locations.plot(ax=axi, color='red', marker='*', markersize=30)
+            gdf_locations.plot(ax=axi, color='blue', marker='*', markersize=30)
 
         axi.set_aspect('equal')
         axi.xaxis.set_major_formatter(FuncFormatter(format_longitude))
@@ -948,6 +928,7 @@ def plot_annual_payouts(df, params_annual):
                     marker="o", markersize=5, label=premium_label)
         ax.plot(sub[year_col], sub[payout_col], color=c_pay, lw=2.2,
                 marker="s", markersize=5, label=payout_label, linestyle="--")
+        ax.set_xticks(sorted(sub[year_col].unique().astype(int)))
         for _, row in sub.iterrows():
             if row[payout_col] > 0:
                 ax.annotate(fmt_millions(row[payout_col], None),
@@ -980,7 +961,7 @@ def plot_annual_payouts(df, params_annual):
     color_map = _build_color_map(groups, palette)
 
     fig, axes = plt.subplots(len(groups), 1,
-                             figsize=figsize or (14, 3.5 * len(groups)),
+                             figsize=figsize or (14, 2.8 * len(groups)),
                              sharex=True)
     if len(groups) == 1:
         axes = [axes]

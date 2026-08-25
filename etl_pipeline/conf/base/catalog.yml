@@ -44,6 +44,7 @@ dict_bounds:
 ds_request:
   type: pricing_automation.datasets_registry.ZarrPartitionedDataset
   filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/sources/${_arg.provider}_${_arg.field}_<partition>.zarr
+  #filepath: ${globals:data_path}/${_arg.country}/total/sources/${_arg.provider}_${_arg.field}_<partition>.zarr
   save_args:
     consolidated: true
     mode: w

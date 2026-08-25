@@ -97,3 +97,9 @@ params_process_planet:
   time_smooth_window: 21
   climatology_smooth_window: 7
   add_abs_anom: true
+
+params_map:
+  subset:
+    include : {}
+  title: Activaciones Promedio — Invierno — Déficit # custom
+  start_year: 2016   # optional

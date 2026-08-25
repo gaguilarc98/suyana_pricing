@@ -51,10 +51,12 @@ def get_smooth_series(ds, field, smooth_window):
 
 RENAME_DICT = {
     'swc': ['swc', 'swvl1', 'soil_water_content'],
-    'prcp': ['prcp', 'tp', 'total_precipitation', 'precipitation', 'precip', 'prc', 'pcp'],
+    'prcp': ['prcp', 'tp', 'total_precipitation', 'precipitation', 'precip', 'prc', 'pcp', 'precip_rnl'],
     'tmin': ['tmin', 't2m', '2t', 't', 'mn2t6', 'mn2t', 'mn2t24'],
     'tmax': ['tmax', 't2m', '2t', 't', 'mx2t6', 'mx2t', 'mx2t24'],
-    'wind': ['wind_speed', 'wind'],
+    'windspeed': ['windspeed', 'wind_speed', 'wind'],
+    'windgust': ['windgust', 'fg10'], 
+    'wind': ['fg10'],
 }
 
 def rename_vars(ds_orig, variable=None):
@@ -526,42 +528,6 @@ def get_climatology_windowed(
     return ds, ds_clim
 
 
-#———————————————————————————————————————————
-# COMPUTE EVENTS FROM DATASET
-#———————————————————————————————————————————
-
-
-def cumulative_flag_runs(flag, dim="time"):
-    """
-    Count consecutive runs of 1s along `dim`, resetting to 0 when flag=0. Works with Dask-backed arrays.
-    """
-    # Cumulative sum of flag
-    cs = flag.cumsum(dim)
-    # Value of cumsum at last zero
-    reset = cs.where(flag == 0).ffill(dim).fillna(0)
-    # Subtract to reset counting
-    runs = (cs - reset) * flag
-
-    return runs.astype("int32")
-
-
-def get_extreme_events(ds, field, var_name, threshold, num_days=3, side = 'lower'):
-    """Add flag of events, count days of events to dataset"""
-    time = get_time_coordinate(ds)
-    flag_name = f'flag_{var_name}'
-    if side == 'lower':
-        ds[flag_name] = xr.where(ds[field]<=threshold, 1, 0)
-    elif side == 'upper':
-        ds[flag_name] = xr.where(ds[field]>=threshold, 1, 0)
-    
-    count_name = f'n_{var_name}'
-    #ds[count_name] = ds[flag_name].rolling({time: num_days}, min_periods=num_days).sum()
-    ds[count_name] = cumulative_flag_runs(ds[flag_name], dim=time)
-    ds[var_name] = xr.where(ds[count_name]==num_days, 1, 0)
-
-    return ds
-    
-
 def add_normalized_variable(ds, field, clim_field, std_field, var_name):
     """Create a normalized version of the variable"""
     ds[var_name] = xr.where(
@@ -569,6 +535,11 @@ def add_normalized_variable(ds, field, clim_field, std_field, var_name):
     )
     
     return ds
+
+
+#———————————————————————————————————————————
+# COMPUTE EVENTS FROM DATASET
+#———————————————————————————————————————————
 
 
 def cumulative_flag_counts(flag, dim="time"):
@@ -584,7 +555,7 @@ def cumulative_flag_counts(flag, dim="time"):
 def cumulative_flag_values(values, flag, dim="time"):
     """Running sum of `values` within consecutive 1-runs of `flag` along `dim`.
 
-    Same reset logic as cumulative_flag_runs, but accumulates `values` instead
+    Same reset logic as cumulative_flag_counts, but accumulates `values` instead
     of counting. Resets to 0 when flag=0, so each episode accumulates from its
     own start. Pass values = intensity to get cumulative cold/heat degree-hours
     within the current episode. Dask-friendly.
@@ -593,6 +564,23 @@ def cumulative_flag_values(values, flag, dim="time"):
     cs = contrib.cumsum(dim)
     base = cs.where(flag == 0).ffill(dim).fillna(0)
     return (cs - base) * flag
+
+
+def get_extreme_events(ds, field, var_name, threshold, num_days=3, side = 'lower'):
+    """Add flag of events, count days of events to dataset"""
+    time = get_time_coordinate(ds)
+    flag_name = f'flag_{var_name}'
+    if side == 'lower':
+        ds[flag_name] = xr.where(ds[field]<=threshold, 1, 0)
+    elif side == 'upper':
+        ds[flag_name] = xr.where(ds[field]>=threshold, 1, 0)
+    
+    count_name = f'n_{var_name}'
+    #ds[count_name] = ds[flag_name].rolling({time: num_days}, min_periods=num_days).sum()
+    ds[count_name] = cumulative_flag_counts(ds[flag_name], dim=time)
+    ds[var_name] = xr.where(ds[count_name]==num_days, 1, 0)
+
+    return ds
 
 
 def flag_and_intensity(ds, field, threshold_field, side='lower', hard_threshold=None):

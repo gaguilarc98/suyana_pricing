@@ -35,11 +35,11 @@ def register_lead_locations(
         centroids = gdf.geometry.centroid
         gdf['lon'] = centroids.x
         gdf['lat'] = centroids.y
-        gdf = gpd.GeoDataFrame(
-            gdf.drop(columns='geometry'),
-            geometry=gpd.points_from_xy(gdf['lon'], gdf['lat']),
-            crs='EPSG:4326'
-        )
+        #gdf = gpd.GeoDataFrame(
+        #    gdf.drop(columns='geometry'),
+        #    geometry=gpd.points_from_xy(gdf['lon'], gdf['lat']),
+        #    crs='EPSG:4326'
+        #)
     else:
         gdf = gpd.GeoDataFrame(
             data.copy(),
@@ -59,7 +59,7 @@ def register_lead_locations(
     if 'value_type' not in gdf.columns:
         gdf['value_type'] = params.get('value_type')
 
-    for col in ['value_amount', 'size_ha', 'rate', 'term', 'target_premium', 'coverage', 'crop']:
+    for col in ['location_id', 'value_amount', 'size_ha', 'rate', 'term', 'target_premium', 'coverage', 'crop']:
         if col not in gdf.columns:
             gdf[col] = params.get(col)
 
@@ -69,9 +69,10 @@ def register_lead_locations(
     gdf.loc[is_loan, 'size_ha'] = None
 
     pad_width = len(str(len(gdf)))
-    gdf['location_id'] = [
-        f"ID-{str(i + 1).zfill(max(pad_width, 3))}" for i in range(len(gdf))
-    ]
+    if 'location_id' not in gdf.columns:
+        gdf['location_id'] = [
+            f"ID-{str(i + 1).zfill(max(pad_width, 3))}" for i in range(len(gdf))
+        ]
 
     col_order = [
         'location_id', 'cod_lead', 'cod_sub_lead', 'lon', 'lat',
@@ -116,7 +117,8 @@ def summarize_processed_data(
     ds = ds_orig.copy()
     # Subset climate area geometry
     LOCATION_NAME = 'location_id'
-    gdf_aoi = gdf.to_crs(epsg='4326')
+    gdf_aoi = gdf.drop_duplicates(subset=['geometry']) #
+    gdf_aoi = gdf_aoi.to_crs(epsg='4326')
 
     def nearest_method(ds, gdf_aoi, LOCATION_NAME, check_var, k):
         lon, lat, time =  get_coordinates(ds)
@@ -155,7 +157,9 @@ def summarize_processed_data(
 
     elif mode == 'within':
         ds_clean, df_clusters = create_cluster_coord(ds, gdf_aoi, LOCATION_NAME) #Using v2 is faster since it applies a spatial join
+        ds_clean = ds_clean.stack(pixel=("lat", "lon"))
         ds_sum = summarize_data(ds_clean, group_coords=[LOCATION_NAME])
+
         print(f"Clustering and summarizing done using within strategy")
 
         df_sum = ds_sum.to_dataframe().reset_index()
@@ -850,6 +854,11 @@ def reprice_dataframe(df_payouts_orig, gdf_locations_orig):
     compute_payout_schedule deliberately leaves it out."""
     df_payouts = df_payouts_orig.copy()
     gdf_locations = gdf_locations_orig.copy()
+    gdf_locations = gdf_locations[
+        ~(gdf_locations['value_type'].isna()) &
+        ~(gdf_locations['value_amount'].isna()) &
+        ~(gdf_locations['coverage'].isna())
+    ].copy()
     df_aux = df_payouts.merge(
         gdf_locations.drop(columns=['geometry']),
         how = 'inner', 

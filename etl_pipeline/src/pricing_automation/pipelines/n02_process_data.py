@@ -749,10 +749,13 @@ def process_data_temp(
     """
     # Read parameters from dictionary
     variable = params['variable']
+    offset = params.get('offset', 0)
     na_replace = params['na_replace']
     period = params['time_window']
+
+    umbral = params.get('umbral', 1)
     threshold = params['threshold']
-    num_days = params['num_days']
+    #num_days = params['num_days']
     side = params['side']
     interp_resolution = params.get('interp_resolution', 0)
     time_smooth_window = params.get('time_smooth_window', 0)
@@ -772,8 +775,14 @@ def process_data_temp(
     # Interpolate data from ERA5 to a finer resolution
     ds_slice = regrid_dataset(ds_slice, method='linear', res=interp_resolution)
 
+    # Rename to uniform lon/lat/time and the canonical variable name.
+    ds_slice = rename_vars(ds_slice, variable)
+    ds_slice = ds_slice[[variable]]
+    print("Renaming variables done")
+
     # Clean data with time slices and na replace values
     ds_clean = clean_data(ds_slice, date_range = period, var=variable, na_replace=na_replace)
+    ds_clean[variable] = ds_clean[variable] - offset
     print(f"Cleaning done")
 
     # Smooth time series given the smooth window
@@ -790,24 +799,31 @@ def process_data_temp(
     )
     ds_clim = xr.merge([ds_clim, ds_std])
 
-    ds_process = add_normalized_variable(
-        ds_clean, variable, 
-        f'clim_{variable}', 
-        f'std_{variable}',
-        f'norm_{variable}'
-    )
+    ds_process = ds_clean.copy()
+    
 
     # Compute extreme days
-    event_name = 'cold_spell' if side=='lower' else 'heat_wave'
+    EVENT_NAME = 'cold_spell' if side=='lower' else 'heat_wave'
+    UMBRAL = umbral * (-1) if side=='lower' else umbral
+    ds_process[f'margin_{variable}'] = ds_process[f'clim_{variable}'] + UMBRAL * ds_process[f'std_{variable}']
     #ds_process = get_extreme_events(ds_clean, variable, event_name, threshold, num_days, side)
-    ds_process = get_extreme_events(ds_clean, f'norm_{variable}', event_name, threshold, num_days, side)
+    #ds_process = get_extreme_events(ds_clean, f'norm_{variable}', event_name, threshold, num_days, side)
 
-    print('Events successfully indetified')
+    print('Events successfully indentified')
+    FLAG_NAME, INTENSITY_NAME = f'flag_{EVENT_NAME}', f'intensity_{EVENT_NAME}'
+    THRESHOLD_VAR_NAME = f'margin_{variable}'
+    ds_process[FLAG_NAME], ds_process[INTENSITY_NAME] = flag_and_intensity(
+        ds_process,
+        variable,
+        THRESHOLD_VAR_NAME,
+        side=side,
+        hard_threshold=threshold,
+    )
 
     return ds_process, ds_clim
 
 
-def process_data_coldspell(
+def process_data_temperature(
     ds: xr.Dataset,
     gdf: gpd.GeoDataFrame,
     params: dict,
@@ -856,17 +872,17 @@ def process_data_coldspell(
     ds_slice = ds_slice[[variable]]
     print("Renaming variables done")
 
+    # Time slice + NA replacement.
+    ds_clean = clean_data(ds_slice, date_range=period, var=variable, na_replace=na_replace, normalize_time=False)
+    ds_clean[variable] = ds_clean[variable] - offset
+
     # Smooth time series given the smooth window
     if time_smooth_window > 0:
         ds_clean = ds_clean.rename({variable: f'{variable}_orig'})
         ds_clean[variable] = get_smooth_series(ds_clean, f'{variable}_orig', time_smooth_window)
-
-    # Time slice + NA replacement.
-    ds_clean = clean_data(ds_slice, date_range=period, var=variable, na_replace=na_replace, normalize_time=False)
-    ds_clean[variable] = ds_clean[variable] - offset
     print("Cleaning done")
 
-    # Get climatology statistics    
+    # Compute climatologies and anomalies at the pixel level 
     ds_process, ds_clim = get_climatology_windowed(
         ds_clean,
         variable,
@@ -879,7 +895,7 @@ def process_data_coldspell(
     )
     print(f"Climatology statistics computed")
     
-    # Get extreme episodes
+    # compute extreme days
     EVENT_NAME = 'cold_spell' if side=='lower' else 'heat_wave'
     THRESHOLD_VAR_NAME = _quantile_label(variable, quantiles[0]) # Default to first value in the list of quantiles
     FLAG_NAME, INTENSITY_NAME = f'flag_{EVENT_NAME}', f'intensity_{EVENT_NAME}'
@@ -890,9 +906,10 @@ def process_data_coldspell(
         side=side,
         hard_threshold=threshold,
     )
-    print(f"Extreme events computed")
+    print(f"Extreme days computed")
     
     # Verify that the event happens locally by counting flags around each pixel
+    '''
     VALID_NAME = f'valid_{EVENT_NAME}'
     flags = ds_process[FLAG_NAME]
     ds_process[VALID_NAME] = spatial_rolling_stat(
@@ -908,14 +925,255 @@ def process_data_coldspell(
     ds_process[VALID_NAME] = xr.where(flags.isnull(), np.nan, xr.where(cond, 1, 0))
     ds_process[INTENSITY_NAME] = xr.where(flags.isnull(), np.nan, xr.where(cond, intensity, 0))
     print(f'Spatial validation of events complete')
+    '''
 
-    #ds_process = get_extreme_episodes(
-    #    ds_process,
-    #    flag_field=VALID_NAME,
-    #    intensity_field=INTENSITY_NAME,
-    #    var_name=EVENT_NAME,
+    ds_process = get_extreme_episodes(
+        ds_process,
+        flag_field=FLAG_NAME,
+        intensity_field=INTENSITY_NAME,
+        var_name=EVENT_NAME,
+    )
+    print(f"Extreme episodes identified")
+
+    return ds_process, ds_clim
+
+
+def process_data_windgust(
+    ds : xr.Dataset,
+    gdf : gpd.GeoDataFrame,
+    params : dict,
+    params_s: dict={},
+):
+    """
+    Clean and process dataset to get unique time series and add anomalies and climatologies
+    Args:
+        - ds : (xr.Dataset) Dataset with Soil Water Content data
+        - gdf : (gpd.GeoDataFrame) GeoDataFrame with geometries
+        - params : (dict) Dictionary with parameters to process data
+        - params_s : (dict) Dictionary with spatial parameters to subset data
+    Returns:
+        - pd.DataFrame with processed data
+        - xr.Dataset with climatologies
+    """
+    # Read parameters from dictionary
+    variable = params['variable']
+    na_replace = params['na_replace']
+    period = params['time_window']
+
+    interp_resolution = params.get('interp_resolution', 0)
+    time_smooth_window = params.get('time_smooth_window', 0)
+    clim_smooth_window = params.get('climatology_smooth_window', 0)
+
+    func = params.get('func', 'mean')
+    quantiles = params.get('quantiles', [0.05])
+    threshold = params.get('threshold', 0)
+    side = params.get('side', 'lower')
+    pixel_window = params.get('pixel_window', 3)
+    
+    
+    # Subset climate area geometry
+    gdf_ca = subset_geometry(gdf, params_s)
+    gdf_ca = gdf_ca.to_crs(epsg='4326')
+
+    # Remove unnecesary coordinates
+    keep_coords = list(get_coordinates(ds)) # list of coords to keep
+    ds = drop_single_coords(ds, except_coords=keep_coords)
+
+    # Slice dataset using the given geometry
+    ds_slice = slice_dataset_w_geometry(ds, gdf_ca)
+
+    # Optional regrid (res=0 is a no-op and returns the dataset unchanged).
+    ds_slice = regrid_dataset(ds_slice, method='linear', res=interp_resolution)
+
+    # Rename to uniform lon/lat/time and the canonical variable name.
+    if variable == 'windspeed':
+        DICT_NAME = {
+            'u10': ['u10', 'u10m'],
+            'v10': ['v10', 'v10m']
+        } 
+        u_var = list(set(ds_slice.data_vars).intersection(DICT_NAME['u10']))[0]
+        v_var = list(set(ds_slice.data_vars).intersection(DICT_NAME['v10']))[0]
+        dict_rename = {u_var: 'u10', v_var: 'v10'}
+        print(f'To compute variable {variable} "{u_var}" and "{v_var}" will be used')
+        ds_slice = ds_slice.rename(dict_rename)
+        ds_slice[variable] = np.hypot(ds_slice['u10'], ds_slice['v10'])
+    ds_slice = rename_vars(ds_slice, variable)
+    ds_slice = ds_slice[[variable]].resample(time="1D").max()
+    # Convert units from meters per second to kilometers per hour
+    ds_slice[variable] = ds_slice[variable]*3600/1000 
+    print("Renaming variables done")
+
+    # Clean data with time slices and na replace values
+    ds_clean = clean_data(ds_slice, date_range = period, var=variable, na_replace=na_replace)
+
+    # Smooth time series given the smooth window
+    if time_smooth_window > 0:
+        ds_clean = ds_clean.rename({f'{variable}': f'{variable}_orig'})
+        ds_clean[f'{variable}'] = get_smooth_series(ds_clean, f'{variable}_orig', time_smooth_window)
+    print(f"Cleaning done")
+
+    # Compute climatologies and anomalies at the pixel level
+    ds_process, ds_clim = get_climatology_windowed(
+        ds_clean,
+        variable,
+        var_name=variable,
+        levels=('dayofyear','hour'), 
+        window_level='dayofyear',
+        window=clim_smooth_window, 
+        func=func, 
+        quantiles=quantiles,
+    )
+    print(f"Climatology statistics computed")
+    
+    # Compute extreme days
+    EVENT_NAME = 'weak_wind' if side=='lower' else 'strong_wind'
+    THRESHOLD_VAR_NAME = _quantile_label(variable, quantiles[0])
+    FLAG_NAME, INTENSITY_NAME = f'flag_{EVENT_NAME}', f'intensity_{EVENT_NAME}'
+    ds_process[FLAG_NAME], ds_process[INTENSITY_NAME] = flag_and_intensity(
+        ds_process,
+        variable,
+        THRESHOLD_VAR_NAME,
+        side=side,
+        hard_threshold=threshold,
+    )
+    print(f"Extreme days computed")
+
+    #ds_process = get_extreme_events(ds_clean, variable, event_name, threshold, num_days, side)
+    #ds_process = get_extreme_events(ds_clean, f'norm_{variable}', event_name, threshold, num_days, side)
+
+    ds_process = get_extreme_episodes(
+        ds_process,
+        flag_field=FLAG_NAME,
+        intensity_field=INTENSITY_NAME,
+        var_name=EVENT_NAME,
+    )
+    print(f"Extreme episodes identified")
+
+    return ds_process, ds_clim
+
+
+def process_data_wind(
+    ds : xr.Dataset,
+    gdf : gpd.GeoDataFrame,
+    params : dict,
+    params_s: dict={},
+):
+    """
+    Clean and process dataset to get unique time series and add anomalies and climatologies
+    Args:
+        - ds : (xr.Dataset) Dataset with Soil Water Content data
+        - gdf : (gpd.GeoDataFrame) GeoDataFrame with geometries
+        - params : (dict) Dictionary with parameters to process data
+        - params_s : (dict) Dictionary with spatial parameters to subset data
+    Returns:
+        - pd.DataFrame with processed data
+        - xr.Dataset with climatologies
+    """
+    # Read parameters from dictionary
+    variable = params['variable']
+    na_replace = params['na_replace']
+    period = params['time_window']
+
+    umbral = params.get('umbral', 1)
+    threshold = params['threshold']
+    func = params.get('func', 'mean')
+    #num_days = params['num_days']
+    side = params['side']
+    interp_resolution = params.get('interp_resolution', 0)
+    time_smooth_window = params.get('time_smooth_window', 0)
+    clim_smooth_window = params.get('climatology_smooth_window', 0)
+    
+    # Subset climate area geometry
+    gdf_ca = subset_geometry(gdf, params_s)
+    gdf_ca = gdf_ca.to_crs(epsg='4326')
+
+    # Remove unnecesary coordinates
+    keep_coords = list(get_coordinates(ds)) # list of coords to keep
+    ds = drop_single_coords(ds, except_coords=keep_coords)
+
+    # Slice dataset using the given geometry
+    ds_slice = slice_dataset_w_geometry(ds, gdf_ca)
+
+    # Interpolate data from ERA5 to a finer resolution
+    ds_slice = regrid_dataset(ds_slice, method='linear', res=interp_resolution)
+
+    # Rename to uniform lon/lat/time and the canonical variable name.
+    if variable == 'windspeed':
+        DICT_NAME = {
+            'u10': ['u10', 'u10m'],
+            'v10': ['v10', 'v10m']
+        } 
+        u_var = list(set(ds_slice.data_vars).intersection(DICT_NAME['u10']))[0]
+        v_var = list(set(ds_slice.data_vars).intersection(DICT_NAME['v10']))[0]
+        dict_rename = {u_var: 'u10', v_var: 'v10'}
+        print(f'To compute variable {variable} "{u_var}" and "{v_var}" will be used')
+        ds_slice = ds_slice.rename(dict_rename)
+        ds_slice[variable] = np.hypot(ds_slice['u10'], ds_slice['v10'])
+    ds_slice = rename_vars(ds_slice, variable)
+    ds_slice = ds_slice[[variable]].resample(time="1D").max()
+    ds_slice[variable] = ds_slice[variable]*3600/1000
+    print("Renaming variables done")
+
+    # Clean data with time slices and na replace values
+    ds_clean = clean_data(ds_slice, date_range = period, var=variable, na_replace=na_replace)
+    print(f"Cleaning done")
+
+    # Smooth time series given the smooth window
+    if time_smooth_window > 0:
+        ds_clean = ds_clean.rename({f'{variable}': f'{variable}_orig'})
+        ds_clean[f'{variable}'] = get_smooth_series(ds_clean, f'{variable}_orig', time_smooth_window)
+
+    # Compute climatologies and anomalies at the pixel level
+    ds_clean, ds_clim = get_climatology(
+        ds_clean, variable, f'clim_{variable}', level='dayofyear', smooth_window=clim_smooth_window
+    ) 
+    ds_clean, ds_std = get_climatology(
+        ds_clean, variable, f'std_{variable}', level='dayofyear', smooth_window=clim_smooth_window, func='std'
+    )
+
+    # Get climatology statistics    
+    #ds_clean, ds_clim = get_climatology_windowed(
+    #    ds_clean,
+    #    variable,
+    #    var_name=f'clim_{variable}',
+    #    levels=('dayofyear','hour'), 
+    #    window_level='dayofyear',
+    #    window=clim_smooth_window, 
+    #    func=func, 
     #)
-    #print(f"Extreme episodes identified")
+    #ds_clean, ds_std = get_climatology_windowed(
+    #    ds_clean,
+    #    variable,
+    #    var_name=f'std_{variable}',
+    #    levels=('dayofyear','hour'), 
+    #    window_level='dayofyear',
+    #    window=clim_smooth_window, 
+    #    func='std', 
+    #)
+
+    ds_clim = xr.merge([ds_clim, ds_std])
+
+    ds_process = ds_clean.copy()
+    
+
+    # Compute extreme days
+    EVENT_NAME = 'weak_wind' if side=='lower' else 'strong_wind'
+    UMBRAL = umbral*(-1) if side=='lower' else umbral
+    ds_process[f'margin_{variable}'] = ds_process[f'clim_{variable}'] + UMBRAL * ds_process[f'std_{variable}']
+
+    #ds_process = get_extreme_events(ds_clean, variable, event_name, threshold, num_days, side)
+    #ds_process = get_extreme_events(ds_clean, f'norm_{variable}', event_name, threshold, num_days, side)
+
+    print('Events successfully indentified')
+    FLAG_NAME, INTENSITY_NAME = f'flag_{EVENT_NAME}', f'intensity_{EVENT_NAME}'
+    THRESHOLD_VAR_NAME = f'margin_{variable}'
+    ds_process[FLAG_NAME], ds_process[INTENSITY_NAME] = flag_and_intensity(
+        ds_process,
+        variable,
+        THRESHOLD_VAR_NAME,
+        side=side,
+        hard_threshold=threshold,
+    )
 
     return ds_process, ds_clim
 
@@ -929,8 +1187,12 @@ def process_data(
     PERIL_PROCESS = {
         'swc': process_data_request,
         'prcp': process_data_request,
-        'tmin': process_data_coldspell,
-        'tmax': process_data_temp,
+        'tmin': process_data_temperature,
+        'tmax': process_data_temperature,
+        #'tmin': process_data_temp,
+        'windspeed': process_data_wind,
+        'windgust': process_data_windgust,
+        'wind': process_data_wind,
     }
 
     variable = params['variable']
