@@ -21,7 +21,7 @@ outputs/
 !pricing/outputs/**
 
 # Secrets
-#.env
+.env
 .env.local
 *.key
 
