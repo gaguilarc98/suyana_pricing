@@ -378,7 +378,7 @@ def plot_anomaly_timeseries(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def plot_context(gdf_context, params_request, gdf_locations=None):
+def plot_context(gdf_context, params_request, gdf_locations=None, location_id_join=False):
 
     lead_id = params_request.get('lead_id', None)
     figsize = (8,5)
@@ -398,9 +398,12 @@ def plot_context(gdf_context, params_request, gdf_locations=None):
         gdf_locations_ = gdf_locations.drop_duplicates(subset=['geometry'])
         gdf_locations_ = gdf_locations_.to_crs(epsg=3857)
 
-        gdf_properties = gdf_locations_.drop(columns=['location_id'])
-        gdf_properties = gdf_properties.sjoin_nearest(gdf_aoi_, how='left')
-        gdf_properties_ = gdf_aoi_[gdf_aoi_['location_id'].isin(gdf_properties['location_id'])].copy()
+        if location_id_join:
+            gdf_properties_ = gdf_aoi_[gdf_aoi_['location_id'].isin(gdf_locations_['location_id'])].copy()
+        else:
+            gdf_properties = gdf_locations_.drop(columns=['location_id'])
+            gdf_properties = gdf_properties.sjoin_nearest(gdf_aoi_, how='left')
+            gdf_properties_ = gdf_aoi_[gdf_aoi_['location_id'].isin(gdf_properties['location_id'])].copy()
 
         gdf_properties_.plot(ax=ax, color='darkblue', alpha=0.75, edgecolor='darkred')
 

@@ -35,11 +35,11 @@ def register_lead_locations(
         centroids = gdf.geometry.centroid
         gdf['lon'] = centroids.x
         gdf['lat'] = centroids.y
-        #gdf = gpd.GeoDataFrame(
-        #    gdf.drop(columns='geometry'),
-        #    geometry=gpd.points_from_xy(gdf['lon'], gdf['lat']),
-        #    crs='EPSG:4326'
-        #)
+        gdf = gpd.GeoDataFrame(
+            gdf.drop(columns='geometry'),
+            geometry=gpd.points_from_xy(gdf['lon'], gdf['lat']),
+            crs='EPSG:4326'
+        )
     else:
         gdf = gpd.GeoDataFrame(
             data.copy(),
@@ -59,7 +59,7 @@ def register_lead_locations(
     if 'value_type' not in gdf.columns:
         gdf['value_type'] = params.get('value_type')
 
-    for col in ['location_id', 'value_amount', 'size_ha', 'rate', 'term', 'target_premium', 'coverage', 'crop']:
+    for col in ['value_amount', 'size_ha', 'rate', 'term', 'target_premium', 'coverage', 'crop', 'window', 'peril']:
         if col not in gdf.columns:
             gdf[col] = params.get(col)
 
@@ -69,15 +69,16 @@ def register_lead_locations(
     gdf.loc[is_loan, 'size_ha'] = None
 
     pad_width = len(str(len(gdf)))
-    if 'location_id' not in gdf.columns:
-        gdf['location_id'] = [
-            f"ID-{str(i + 1).zfill(max(pad_width, 3))}" for i in range(len(gdf))
-        ]
+    gdf_aux = gdf[['geometry']].drop_duplicates()
+    gdf_aux['location_id'] = [
+        f"ID-{str(i + 1).zfill(max(pad_width, 3))}" for i in range(len(gdf_aux))
+    ]
+    gdf = gdf.merge(gdf_aux, how='left', on=['geometry'])
 
     col_order = [
         'location_id', 'cod_lead', 'cod_sub_lead', 'lon', 'lat',
         'value_type', 'value_amount', 'size_ha', 'rate', 'term',
-        'target_premium', 'coverage', 'crop', 'geometry'
+        'target_premium', 'coverage', 'crop', 'window', 'peril','geometry'
     ]
     return gdf[col_order]
 
@@ -117,7 +118,7 @@ def summarize_processed_data(
     ds = ds_orig.copy()
     # Subset climate area geometry
     LOCATION_NAME = 'location_id'
-    gdf_aoi = gdf.drop_duplicates(subset=['geometry']) #
+    gdf_aoi = gdf.drop_duplicates(subset='geometry')
     gdf_aoi = gdf_aoi.to_crs(epsg='4326')
 
     def nearest_method(ds, gdf_aoi, LOCATION_NAME, check_var, k):
@@ -157,9 +158,7 @@ def summarize_processed_data(
 
     elif mode == 'within':
         ds_clean, df_clusters = create_cluster_coord(ds, gdf_aoi, LOCATION_NAME) #Using v2 is faster since it applies a spatial join
-        ds_clean = ds_clean.stack(pixel=("lat", "lon"))
         ds_sum = summarize_data(ds_clean, group_coords=[LOCATION_NAME])
-
         print(f"Clustering and summarizing done using within strategy")
 
         df_sum = ds_sum.to_dataframe().reset_index()
@@ -201,15 +200,36 @@ def summarize_processed_data(
 
 
 ########____GENERATE ACCUMULATED ANOMALIES____########
+
+
+MAP_VARS = {
+    #'intensity_cold_spell': ('cum_intensity_cold_spell', 'n_cold_spell'),
+    'intensity_heat_wave': ('cum_intensity_heat_wave', 'n_heat_wave'),
+    #'intensity_strong_wind': ('cum_intensity_strong_wind', 'n_strong_wind'),
+}
+
+def flag_episode_severity(df, cum_col='cum_intensity_heat_wave', n_col='n_heat_wave',
+                           min_duration=2, group_cols=['location_id'], var_name='episode_intensity'):
+    df = df.sort_values(group_cols + ['time']).copy()
+
+    next_n = df.groupby(group_cols)[n_col].shift(-1)
+    is_episode_end = next_n.fillna(0) == 0          # NaN at series end treated as "ended"
+    qualifies = df[n_col] >= min_duration
+
+    mask = is_episode_end & qualifies
+
+    df[var_name] = np.where(mask, df[cum_col], 0.0)
+    return df
  
  
 def generate_accumulated_anomalies(
     df_orig,
     window,
     time_dim='time',
-    group_cols=['climate_area_id'],
+    group_cols=['location_id'],
     variable_name='swc_adjusted',
-    set_variable='index_value'
+    set_variable='index_value',
+    duration=3
 ):
     """Accumulate variable into seasonal windows. Returns one row per
     (group, window_year, window) with 'flag_complete_window' (1=full)."""
@@ -249,6 +269,16 @@ def generate_accumulated_anomalies(
         df_total.append(df_window)
  
     df_total = pd.concat(df_total, axis=0, ignore_index=True)
+    if variable_name in MAP_VARS.keys():
+        intensity, count = MAP_VARS[variable_name]
+        df_total = flag_episode_severity(
+            df_total, 
+            intensity, 
+            count, 
+            group_cols = group_cols, 
+            var_name = variable_name,
+            min_duration = duration,
+        )
  
     df_cumulated = df_total.groupby(
         group_cols + ['window_year', 'window', 'start_date', 'end_date'],
@@ -499,7 +529,7 @@ def _validate_monotonic_levels(levels, tail_label, window_key):
 
 def _validate_tail(tail_spec, window_key, tail_label,
                    parent_tlr, parent_ded):
-    """Validate and normalise a tail spec. Fills target_loss_ratio/deductions
+    """Validate and normalise a tail spec. Fills target_loss_ratio/markup
     defaults from parent values. coverage and insured_value are not filled
     here, both are priced per location from gdf_locations, not the contract.
     Both designs take levels={percentile: payout_fraction}, checked for
@@ -564,7 +594,7 @@ def _validate_tail(tail_spec, window_key, tail_label,
         _validate_monotonic_levels(levels, tail_label, window_key)
 
     tail_spec.setdefault('target_loss_ratio', parent_tlr)
-    tail_spec.setdefault('deductions',        parent_ded)
+    tail_spec.setdefault('markup',        parent_ded)
  
  
 def _validate_contract(params_contract, valid_window_keys):
@@ -580,7 +610,7 @@ def _validate_contract(params_contract, valid_window_keys):
     specs = copy.deepcopy(params_contract)
  
     specs.setdefault('target_loss_ratio', 0.74)
-    specs.setdefault('deductions',        0.14)
+    specs.setdefault('markup',        0.14)
  
     windows = specs.get('windows', {})
     if not windows:
@@ -614,7 +644,7 @@ def _validate_contract(params_contract, valid_window_keys):
                 window_key = window_key,
                 tail_label = tail_label,
                 parent_tlr = specs['target_loss_ratio'],
-                parent_ded = specs['deductions'],
+                parent_ded = specs['markup'],
             )
  
     return specs
@@ -696,7 +726,7 @@ def compute_payout_schedule(df_cum, group_cols, params_contract):
  
     df['_pct100'] = df['percentile'] * 100
     base_cols     = group_cols + [
-        'window_year', 'start_date', 'end_date',
+        'peril', 'window_year', 'start_date', 'end_date',
         'index_value', 'index_desc', 'percentile', '_pct100'
     ]
     df_base       = df[base_cols].copy()
@@ -715,7 +745,7 @@ def compute_payout_schedule(df_cum, group_cols, params_contract):
             tail_spec    = window_spec[tail_label]
             design       = tail_spec['design']
             tlr          = tail_spec['target_loss_ratio']
-            ded          = tail_spec['deductions']
+            ded          = tail_spec['markup']
 
             df_tail           = df_win.copy()
             df_tail['tail']   = tail_label
@@ -774,7 +804,7 @@ def compute_payout_schedule(df_cum, group_cols, params_contract):
             df_tail['pure_premium_pct']  = np.round(pure_premium_pct, 10)
             df_tail['target_loss_ratio'] = tlr
             df_tail['re_premium_pct']    = np.round(pure_premium_pct / tlr, 10)
-            df_tail['deductions']        = ded
+            df_tail['markup']        = ded
             df_tail['gross_premium_pct'] = np.round(
                 df_tail['re_premium_pct'] * (1 + ded), 10
             )
@@ -801,15 +831,25 @@ def compute_payout_schedule(df_cum, group_cols, params_contract):
         'window_year', 'tail', 'design', 'levels', 'start_date', 'end_date',
         'index_value', 'index_desc', 'percentile', 'payout_pct',
         'pure_premium_pct', 'target_loss_ratio', 're_premium_pct',
-        'deductions', 'gross_premium_pct',
+        'markup', 'gross_premium_pct',
     ]
-    col_order = group_cols + non_group
+    col_order = ['peril'] + group_cols + non_group
     return df_payouts[[c for c in col_order if c in df_payouts.columns]]
  
  
 ########____STAGE 4: ORCHESTRATORS____########
  
- 
+MAP_PERIL_VAR = {
+    ('Moisture deficit',      'swc'):      'neg_anom_swc',
+    ('Moisture excess',       'swc'):      'pos_anom_swc',
+    ('Precipitation deficit', 'prcp'):     'prcp',
+    ('Precipitation excess',  'prcp'):     'prcp',
+    ('Cold spell',            'tmin'):     'intensity_cold_spell',
+    ('Heat wave',             'tmax'):     'intensity_heat_wave',
+    ('Strong wind',           'wind'):     'intensity_strong_wind',
+    ('Strong wind',           'windgust'): 'intensity_strong_wind',
+}
+
 def create_index_values(
     df_orig: pd.DataFrame,
     params_indices: dict,
@@ -821,11 +861,22 @@ def create_index_values(
     params_trigger keys: variable, windows, group_cols, dist, start_time.
     """
     variable   = params_indices['variable']
+    peril      = params_indices['peril']
     windows    = params_indices['windows']
     group_cols = list(params_indices.get('group_cols', ['location_id']))
     dist       = params_indices.get('dist', 'empirical')
     start_time = params_indices.get('start_time', None)
- 
+    duration   = params_indices.get('duration', 2)
+
+    accum_variable = MAP_PERIL_VAR.get((peril, variable))
+    if accum_variable is None:
+        raise ValueError(
+            f"No accumulation variable mapped for (peril, variable) = "
+            f"({peril!r}, {variable!r}). Valid combinations: "
+            f"{list(MAP_PERIL_VAR.keys())}."
+        )
+
+
     df_hist         = df_orig.copy()
     df_hist['time'] = pd.to_datetime(df_hist['time'])
  
@@ -836,13 +887,16 @@ def create_index_values(
         df_hist,
         window=windows,
         group_cols=group_cols,
-        variable_name=variable,
+        variable_name=accum_variable,
         set_variable='index_value',
+        duration=duration
     )
  
     groups = group_cols + ['window']
     fit    = FittedDistribution.fit(df_cum, groups, 'index_value', dist)
     df_cum['percentile'] = fit.compute_percentiles(df_cum, variable='index_value')
+
+    df_cum['peril'] = peril
  
     return df_cum, fit
  
@@ -854,15 +908,10 @@ def reprice_dataframe(df_payouts_orig, gdf_locations_orig):
     compute_payout_schedule deliberately leaves it out."""
     df_payouts = df_payouts_orig.copy()
     gdf_locations = gdf_locations_orig.copy()
-    gdf_locations = gdf_locations[
-        ~(gdf_locations['value_type'].isna()) &
-        ~(gdf_locations['value_amount'].isna()) &
-        ~(gdf_locations['coverage'].isna())
-    ].copy()
     df_aux = df_payouts.merge(
         gdf_locations.drop(columns=['geometry']),
         how = 'inner', 
-        on = ['location_id']
+        on = ['location_id', 'window', 'peril']
     )
     df_aux['period'] = df_aux['start_date'].dt.strftime('%b %d') + ' - ' + df_aux['end_date'].dt.strftime('%b %d')
     
@@ -919,6 +968,7 @@ def generate_payout_policy(
     lead_id    = params_request.get('lead_id', None)
     index_desc = df_cum['index_desc'].iloc[0] if 'index_desc' in df_cum.columns else 'cum_index'
     windows    = params_indices['windows']
+    peril      = params_indices['peril']
  
     # Cross-validate window keys before any computation
     valid_window_keys = set(windows.keys())
@@ -933,6 +983,7 @@ def generate_payout_policy(
     # index_desc: one column assignment instead of repeating the same
     # scalar into every record dict inside _build_policy_table.
     df_policy['index_desc'] = index_desc
+    df_policy['peril'] = peril
  
     # period: derived straight from the MM-DD window definitions rather
     # than from realized dates, since a policy row represents the
@@ -951,16 +1002,16 @@ def generate_payout_policy(
     # crop: sourced directly from gdf_locations (one crop per location_id),
     # Joined in before pricing_lookup, since pricing_lookup's key now
     # includes crop and needs it to already be on df_policy.
-    df_policy = df_policy.merge(
-        gdf_locations[['location_id', 'crop']], on='location_id', how='left'
-    )
+    #df_policy = df_policy.merge(
+    #    gdf_locations[['location_id', 'crop']], on='location_id', how='left'
+    #)
  
     # coverage and insured_value: both come from gdf_locations, only
     # reprice_dataframe has that joined in. Pull the deduplicated, repriced
-    pricing_lookup = df_payouts[groups + ['crop', 'tail', 'coverage', 'insured_value']].drop_duplicates(
-        subset=groups + ['crop', 'tail']
-    )
-    df_policy = df_policy.merge(pricing_lookup, on=groups + ['crop', 'tail'], how='left')
+    #pricing_lookup = df_payouts[groups + ['crop', 'tail', 'coverage', 'insured_value']].drop_duplicates(
+    #    subset=groups + ['crop', 'tail']
+    #)
+    #df_policy = df_policy.merge(pricing_lookup, on=groups + ['crop', 'tail'], how='left')
  
     if lead_id is not None:
         df_policy.insert(0, 'lead_id', lead_id)

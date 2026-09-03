@@ -96,7 +96,7 @@ def trigger_pipeline(**kwargs) -> Pipeline:
         ),
         node(
             func = generate_payout_policy,
-            inputs = ['df_indices', 'pkl_fit', 'params:params_request', 'params:params_indices', 'params:params_contract', 'gdf_locations'],
+            inputs = ['df_indices', 'pkl_fit', 'params:params_request', 'params:params_indices', 'params:params_contract', 'gdf_locations'], #'pkl_fit',
             outputs = ['df_payouts', 'df_policy'],
             name = 'generate_payout_policy',
             tags = ['triggers']

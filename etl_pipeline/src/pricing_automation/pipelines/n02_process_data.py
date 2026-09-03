@@ -1110,6 +1110,12 @@ def process_data_wind(
         ds_slice = ds_slice.rename(dict_rename)
         ds_slice[variable] = np.hypot(ds_slice['u10'], ds_slice['v10'])
     ds_slice = rename_vars(ds_slice, variable)
+
+    # Smooth time series given the smooth window
+    if time_smooth_window > 0:
+        ds_slice = ds_slice.rename({f'{variable}': f'{variable}_orig'})
+        ds_slice[f'{variable}'] = get_smooth_series(ds_slice, f'{variable}_orig', time_smooth_window)
+        
     ds_slice = ds_slice[[variable]].resample(time="1D").max()
     ds_slice[variable] = ds_slice[variable]*3600/1000
     print("Renaming variables done")
@@ -1117,11 +1123,6 @@ def process_data_wind(
     # Clean data with time slices and na replace values
     ds_clean = clean_data(ds_slice, date_range = period, var=variable, na_replace=na_replace)
     print(f"Cleaning done")
-
-    # Smooth time series given the smooth window
-    if time_smooth_window > 0:
-        ds_clean = ds_clean.rename({f'{variable}': f'{variable}_orig'})
-        ds_clean[f'{variable}'] = get_smooth_series(ds_clean, f'{variable}_orig', time_smooth_window)
 
     # Compute climatologies and anomalies at the pixel level
     ds_clean, ds_clim = get_climatology(
@@ -1192,7 +1193,7 @@ def process_data(
         #'tmin': process_data_temp,
         'windspeed': process_data_wind,
         'windgust': process_data_windgust,
-        'wind': process_data_wind,
+        'wind': process_data_windgust,
     }
 
     variable = params['variable']

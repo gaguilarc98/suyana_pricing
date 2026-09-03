@@ -5,11 +5,13 @@ _arg:
   lead_id: ${runtime_params:lead_id, 'test1'}
   provider: ${runtime_params:provider, ${globals:provider}}
   field: ${runtime_params:field, ${globals:field}}
+  peril: ${runtime_params:peril, 'Moisture deficit'}
   start_year: ${runtime_params:start_year, 2006}
   end_year: ${runtime_params:end_year, 2025}
   start_indices_at: ${runtime_params:start_indices_at, '2010-01-01'}
   target_loss_ratio: ${runtime_params:target_loss_ratio, 0.74}
-  deductions: ${runtime_params:deductions, 0.175}
+  target_pure_premium: ${runtime_params:target_loss_ratio, 0.02}
+  markup: ${runtime_params:markup, 0.175}
 
 # Parameters for aoi bounding box
 params_s:
@@ -35,6 +37,7 @@ params_request:
   lead_id: ${_arg.lead_id}
   provider: ${_arg.provider}
   field: ${_arg.field}
+  peril: ${_arg.peril}
   data_path: ${globals:data_path}
 
 # Parameters for processing Planet data
@@ -87,30 +90,53 @@ params_summarize:
 
 # Parameters for creating triggers
 params_indices:
-  variable: 'neg_anom_swc' #'prcp'
+  variable: ${_arg.field} #'prcp'
+  peril: ${_arg.peril}
   group_cols: ['location_id']
   dist: 't' #'gamma'
-  start_time: ${_arg.start_indices_at}
-  windows:
-    1: ['09-15', '11-15']
+  start_time: '2006-01-01'
+  windows: 
+    1: ['09-01', '09-30']
+    2: ['12-01', '12-31']
+    3: ['01-01', '01-31']
+    4: ['02-01', '02-28']
+    5: ['10-01', '10-31']
+    6: ['03-01', '03-31']
+    7: ['04-01', '04-30']
+    8: ['11-01', '11-30']
     #2: ['08-01', '01-31']
 
 
 # Shared pricing defaults (override per crop or tail if needed)
 params_contract:
   target_loss_ratio: ${_arg.target_loss_ratio}
-  deductions: ${_arg.deductions}
+  markup: ${_arg.markup}
+  target_pure_premium: ${_arg.target_pure_premium}
   # Monitors both deficit in lower and excess in upper
   windows: 
       1:
+        tail: 'upper'
+      2:
+        tail: 'upper'
+      3:
+        tail: 'upper'
+      4:
+        tail: 'upper'
+      5:
+        tail: 'upper'
+      6:
+        tail: 'upper'
+      7:
+        tail: 'upper'
+      8:
+        tail: 'upper'
         #lower: 
         #  # Deficit rainfall: continuous ramp from p10 to p1
         #  'design': 'continuous' #'layered' #
         #  'levels': [10, 1] #{20: 0.30, 10: 0.4, 5: 0.5} #
         #  # inherits coverage=0.14, insured_value=7_200_000 from top level
-        upper: 
-          design: 'continuous' #'continuous' #
-          levels: {90: 0, 100: 1} #{90: 0, 99:1} #
+          #design: 'continuous' #'continuous' #
+          #levels: {90: 0, 100: 1} #{90: 0, 99:1} #
       #2:
       #  upper: 
       #    design: 'layered' #'continuous' #
