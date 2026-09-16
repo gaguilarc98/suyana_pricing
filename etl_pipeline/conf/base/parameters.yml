@@ -66,7 +66,7 @@ params_process:
   variable: ${_arg.field}
   na_replace: -9999
   time_window:
-    - '2006-01-01'
+    - '1996-01-01'
     - '2025-12-31'
   interp_resolution: 0
   time_smooth_window: 0
@@ -74,14 +74,11 @@ params_process:
 
 params_lead_specs:
   lead_id: ${_arg.lead_id}
-  value_type: 'Production Cost' # Either 'Production Cost' or 'Loan Amount'
-  value_amount: 750
-  size_ha: 320
-  rate: null
-  term: null
-  target_premium: null
+  value_density: 750
+  exposure_weight: 320
+  target_premium: null # optional
   crop: all
-  coverage: 1
+  coverage_pct: 0.5
 
 params_summarize:
   variable: ${_arg.field}
@@ -92,55 +89,26 @@ params_summarize:
 params_indices:
   variable: ${_arg.field} #'prcp'
   peril: ${_arg.peril}
-  group_cols: ['location_id']
+  #group_cols: ['location_id']
   dist: 't' #'gamma'
-  start_time: '2006-01-01'
+  start_time: '1996-01-01'
   windows: 
-    1: ['09-01', '09-30']
-    2: ['12-01', '12-31']
-    3: ['01-01', '01-31']
-    4: ['02-01', '02-28']
-    5: ['10-01', '10-31']
-    6: ['03-01', '03-31']
-    7: ['04-01', '04-30']
-    8: ['11-01', '11-30']
-    #2: ['08-01', '01-31']
+    1: ['10-01', '12-31']
 
 
 # Shared pricing defaults (override per crop or tail if needed)
 params_contract:
+  lead_id: ${_arg.lead_id}
   target_loss_ratio: ${_arg.target_loss_ratio}
   markup: ${_arg.markup}
   target_pure_premium: ${_arg.target_pure_premium}
   # Monitors both deficit in lower and excess in upper
   windows: 
       1:
-        tail: 'upper'
-      2:
-        tail: 'upper'
-      3:
-        tail: 'upper'
-      4:
-        tail: 'upper'
-      5:
-        tail: 'upper'
-      6:
-        tail: 'upper'
-      7:
-        tail: 'upper'
-      8:
-        tail: 'upper'
-        #lower: 
-        #  # Deficit rainfall: continuous ramp from p10 to p1
-        #  'design': 'continuous' #'layered' #
-        #  'levels': [10, 1] #{20: 0.30, 10: 0.4, 5: 0.5} #
-        #  # inherits coverage=0.14, insured_value=7_200_000 from top level
-          #design: 'continuous' #'continuous' #
-          #levels: {90: 0, 100: 1} #{90: 0, 99:1} #
-      #2:
-      #  upper: 
-      #    design: 'layered' #'continuous' #
-      #    levels: {80: 0.30, 90: 0.4, 95: 0.5} #{90: 0, 99:1} #
+        upper:
+          'design': 'continuous' #'layered' 
+          'levels': {95: 0, 99.999: 1} 
+      
 
 # Parameters for boostrap analysis
 params_bootstrap:
@@ -160,10 +128,11 @@ params_series:
   start_time: 2010-01-01            # optional, default: None (no lower x-limit clip)
   end_time: 2025-12-31              # optional, default: None (no upper clip)
   title: Soil Water Content index construction  # optional, default: None (no suptitle)
+  seed: 42
   #figsize: [12, 7]                  # optional, default: (12, 7)
   subset:                           # optional, default: {} (passed to subset_geometry)
     include:                        
-      location_id: ['ID-334']
+      location_id: ['ID-001']
       #crop: ['all']                  # optional
       #tail: ['upper']                # optional
 

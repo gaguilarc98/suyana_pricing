@@ -1,27 +1,9 @@
 # Parameters for already available areas
 _arg:
-  country: ${runtime_params:country, ${globals:country}}
-  region: ${runtime_params:region, ${globals:region}}
-  lead_id: ${runtime_params:lead_id, 'test1'}
-  provider: ${runtime_params:provider, ${globals:provider}}
-  field: ${runtime_params:field, ${globals:field}}
   peril: ${runtime_params:peril, 'Heat wave'}
   start_year: ${runtime_params:start_year, 1996}
-  end_year: ${runtime_params:end_year, 2025}
-  target_loss_ratio: ${runtime_params:target_loss_ratio, 0.74}
-  target_pure_premium: ${runtime_params:target_loss_ratio, 0.02}
-  markup: ${runtime_params:markup, 0.175}
-
-# Parameters for processing temperature data
 params_process:
-  variable: ${_arg.field}
-  na_replace: -9999
   offset: 0 #273.15
-  time_window:
-    - '2006-01-01'
-    - '2025-12-31'
-  interp_resolution: 0
-  time_smooth_window: 0
   climatology_smooth_window: 7
   func: 'quantile'
   quantiles: [0.95]
@@ -30,113 +12,19 @@ params_process:
   pixel_window: 3
   num_periods: 3
 
-params_lead_specs:
-  lead_id: ${_arg.lead_id}
-  value_type: 'Production Cost' # Either 'Production Cost' or 'Loan Amount'
-  value_amount: 750
-  size_ha: 320
-  rate: null
-  term: null
-  target_premium: null # optional
-  crop: all
-  coverage: 0.5
-
 params_summarize:
-  variable: ${_arg.field}
-  #summarize_mode: 'nearest' #'nearest' #'within'
   add_abs_anom: false #true
 
 
 # Parameters for creating triggers
 params_indices:
-  variable: ${_arg.field}
-  peril: ${_arg.peril}
-  group_cols: ['location_id']
   dist: 'gamma'
-  start_time: '2006-01-01' # optional
-  windows: 
-    1: ['09-01', '09-30']
-    2: ['12-01', '12-31']
-    3: ['01-01', '01-31']
-    4: ['02-01', '02-28']
-    5: ['10-01', '10-31']
-    6: ['03-01', '03-31']
-    7: ['04-01', '04-30']
-    8: ['11-01', '11-30']
-    #1: ['08-01', '12-31'] #['05-20', '09-30']   # main growing season
-    #2: ['06-01', '10-31']   # second season (crosses year-end)
-
-# Shared pricing defaults (override per crop or tail if needed)
-params_contract:
-  target_loss_ratio: ${_arg.target_loss_ratio}
-  markup: ${_arg.markup}
-  target_pure_premium: ${_arg.target_pure_premium}
-  # Monitors both deficit in lower and excess in upper
-  windows: 
-      1:
-        tail: 'upper'
-      2:
-        tail: 'upper'
-      3:
-        tail: 'upper'
-      4:
-        tail: 'upper'
-      5:
-        tail: 'upper'
-      6:
-        tail: 'upper'
-      7:
-        tail: 'upper'
-      8:
-        tail: 'upper'
-        #lower: 
-        #  # Deficit rainfall: continuous ramp from p10 to p1
-        #  'design': 'continuous' #'layered' #
-        #  'levels': [10, 1] #{20: 0.30, 10: 0.4, 5: 0.5} #
-        #  # inherits coverage=0.14, insured_value=7_200_000 from top level
-          #design: 'continuous' #'continuous' #
-          #levels: {94: 0, 99: 1} #[90, 99] #
-
-# Parameters for boostrap analysis
-params_bootstrap:
-  n_iterations: 1000
-  seed: 42
-
-params_quote:
-  loading_factor: 0.05
-  loss_ratio: ${_arg.target_loss_ratio}
-
-
-# Viz parameters
-params_map:
-  title: Porcentaje de compensaciones promedio # custom
-  start_year: 2014   # optional
-  subset: {}
-    #include :             # optional
-      #window: [1, 2]     # optional
-      #tail: ['upper']    # optional
-
 params_series:
-  window: 1                         # required, key into params_indices['windows']
-  variable: ${_arg.field}           # required, column plotted as the raw/anomaly series
   cum_variable: intensity_heat_wave  # required, column used for the cumulated index (bottom panel)
   clim_variable: tmax_p95 # required, climatology column plotted in top panel
   start_time: 2020-01-01            # optional, default: None (no lower x-limit clip)
-  end_time: 2025-12-31              # optional, default: None (no upper clip)
   title: Heatwave index construction  # optional, default: None (no suptitle)
-  #figsize: [12, 7]                  # optional, default: (12, 7)
-  subset:                           # optional, default: {} (passed to subset_geometry)
-    include: {}                       
-      #location_id: ['ID-001']
-      #crop: ['all']                  # optional
-      #tail: ['upper']                # optional
 
 params_intensity:
   variable: intensity_heat_wave # required, name of the 0/1 event variable in ds
-  title: Intensity of events by year ${params_intensity.period_start} to ${params_intensity.period_end} # optional, default: 'Event frequency by year'
-  bar_label: Event intensity       # optional, default: 'Event frequency'
   start_year: 2016                 # optional, drops years before this one
-  mask_zeroes: false                # optional, default: false
-  period_start: "07-01"             # optional, "MM-DD"; must be paired with period_end
-  period_end: "08-31"                # optional, "MM-DD"; must be paired with period_start
-

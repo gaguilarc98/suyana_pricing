@@ -1,135 +1,16 @@
 # Parameters for already available areas
 _arg:
-  country: ${runtime_params:country, ${globals:country}}
-  region: ${runtime_params:region, ${globals:region}}
-  lead_id: ${runtime_params:lead_id, 'test1'}
-  provider: ${runtime_params:provider, ${globals:provider}}
-  field: ${runtime_params:field, ${globals:field}}
   peril: ${runtime_params:peril, 'Precipitation excess'}
-  start_year: ${runtime_params:start_year, 2006}
-  end_year: ${runtime_params:end_year, 2025}
-  start_indices_at: ${runtime_params:start_indices_at, '2010-01-01'}
-  target_loss_ratio: ${runtime_params:target_loss_ratio, 0.74}
-  target_pure_premium: ${runtime_params:target_loss_ratio, 0.02}
-  markup: ${runtime_params:markup, 0.175}
-
-# Parameters for aoi bounding box
-params_process:
-  variable: ${_arg.field}
-  na_replace: -9999
-  time_window:
-    - '2006-01-01'
-    - '2025-12-31'
-  interp_resolution: 0
-  time_smooth_window: 0
-  climatology_smooth_window: 0
-
-params_lead_specs:
-  lead_id: ${_arg.lead_id}
-  value_type: 'Production Cost' # Either 'Production Cost' or 'Loan Amount'
-  value_amount: 750
-  size_ha: 320
-  rate: null
-  term: null
-  target_premium: null
-  crop: all
-  coverage: 1
-
+  start_indices_at: ${runtime_params:start_indices_at, '1996-01-01'}
 params_summarize:
-  variable: ${_arg.field}
-  #summarize_mode: 'nearest'
   add_abs_anom: false #true
 
 # Parameters for creating triggers
 params_indices:
-  variable: ${_arg.field}
-  peril: ${_arg.peril}
-  group_cols: ['location_id']
   dist: 'gamma'
   start_time: ${_arg.start_indices_at}
-  windows:
-    1: ['09-01', '09-30']
-    2: ['12-01', '12-31']
-    3: ['01-01', '01-31']
-    4: ['02-01', '02-28']
-    5: ['10-01', '10-31']
-    6: ['03-01', '03-31']
-    7: ['04-01', '04-30']
-    8: ['11-01', '11-30']
-    #1: ['10-01', '05-31']
-    #2: ['08-01', '01-31']
-
-# Shared pricing defaults (override per crop or tail if needed)
-params_contract:
-  target_loss_ratio: ${_arg.target_loss_ratio}
-  markup: ${_arg.markup}
-  target_pure_premium: ${_arg.target_pure_premium}
-  # Monitors both deficit in lower and excess in upper
-  windows: 
-      1:
-        tail: 'upper'
-      2:
-        tail: 'upper'
-      3:
-        tail: 'upper'
-      4:
-        tail: 'upper'
-      5:
-        tail: 'upper'
-      6:
-        tail: 'upper'
-      7:
-        tail: 'upper'
-      8:
-        tail: 'upper'
-        #lower: 
-        #  # Deficit rainfall: continuous ramp from p10 to p1
-        #  'design': 'continuous' #'layered' #
-        #  'levels': [10, 1] #{20: 0.30, 10: 0.4, 5: 0.5} #
-        #  # inherits coverage=0.14, insured_value=7_200_000 from top level
-        #tail: 'upper'
-          #design: 'continuous' #'continuous' #
-          #levels: {90: 0, 100: 1} #{90: 0, 99:1} #
-      #2:
-      #  upper: 
-      #    design: 'layered' #'continuous' #
-      #    levels: {80: 0.30, 90: 0.4, 95: 0.5} #{90: 0, 99:1} #
 
 # Viz parameters
 params_series:
-  window: 1                         # required, key into params_indices['windows']
-  variable: ${_arg.field}           # required, column plotted as the raw/anomaly series
-  cum_variable: anom_${_arg.field}  # required, column used for the cumulated index (bottom panel)
-  clim_variable: clim_${_arg.field} # required, climatology column plotted in top panel
-  start_time: 2010-01-01            # optional, default: None (no lower x-limit clip)
-  end_time: 2025-12-31              # optional, default: None (no upper clip)
   title: Precipitation index construction  # optional, default: None (no suptitle)
   #figsize: [12, 7]                  # optional, default: (12, 7)
-  subset:                           # optional, default: {} (passed to subset_geometry)
-    include:                      
-      location_id: ['ID-334']
-      #crop: ['all']                  # optional
-      #tail: ['upper']                # optional
-
-params_intensity:
-  variable: anom_${_arg.field} # required, name of the 0/1 event variable in ds
-  title: Intensity of events by year ${params_intensity.period_start} to ${params_intensity.period_end}   # optional, default: 'Event frequency by year'
-  bar_label: Event intensity       # optional, default: 'Event frequency'
-  start_year: 2010                 # optional, drops years before this one
-  mask_zeroes: false                # optional, default: false
-  period_start: "07-01"             # optional, "MM-DD"; must be paired with period_end
-  period_end: "08-31"                # optional, "MM-DD"; must be paired with period_start
-
-params_annual:
-  payout_col: payout              # required, column with payout values
-  title: Annual Payouts           # required, figure title
-  split_col: null                 # optional, default: None (one subplot per unique value)
-  premium_col: null               # optional, default: None (premium line/bar skipped if omitted)
-  year_col: window_year           # optional, default: 'window_year'
-  agg: sum                        # optional, default: 'mean' (e.g. 'sum', 'median')
-  payout_label: Total Payout      # optional, default: 'Pago total'
-  #premium_label: Total Premium    # optional, default: 'Prima total'
-  ylabel: USD                     # optional, default: None
-  #figsize: [12, 5]                # optional, default: (12, 5) single / (14, 3.5*n_groups) split
-  #palette: Set2                   # optional, default: 'Set2'
-  #bar: false                      # optional, default: false (premium as line vs bar)

@@ -1,0 +1,6 @@
+# SWC (Soil Water Content) environment.
+#
+# Every parameter for the ERA5 / SWC / Moisture deficit combination already
+# matches conf/base/parameters.yml, so there is nothing left to override here
+# once the soft-merge strategy (see settings.py) pulls in conf/base. This file
+# exists so `--env swc` is a valid, explicit choice alongside prcp/tmax/tmin/wind.

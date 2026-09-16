@@ -4,7 +4,7 @@ from .a02_create_clusters import *
 from .a02_preprocess_planet_data import *
 from .a02_auxiliary_processes import *
 from .a02_auxiliary_processes import _quantile_label, _func_label
-
+from joblib import Parallel, delayed
 
 #———————————————————————————————————————————————————————————————
 # SLICE MULTIPLE GEOMETRIES
@@ -22,80 +22,92 @@ _AREAS_DEFAULTS = {
     "grid_res":     300,
 }
 
-def _slice_single_geometry(ds_orig, gdf_orig, params_areas):
+def _single_area(gdf: gpd.GeoDataFrame, cluster_var: str) -> gpd.GeoDataFrame:
+    """Wrap a geometry as a single cluster (cluster_var = 0)."""
+    gdf = gdf.copy()
+    gdf.insert(0, cluster_var, 0)
+    return gdf
+
+
+def _assign_id(gdf: gpd.GeoDataFrame, location_var: str, cluster_var: str) -> gpd.GeoDataFrame:
+    """Rename original id to '{location_var}_orig' and build a new '{orig}-{cluster:02d}' id."""
+    gdf = gdf.rename(columns={location_var: f"{location_var}_orig"})
+    gdf[location_var] = (
+        gdf[f"{location_var}_orig"].astype(str) + "-"
+        + gdf[cluster_var].astype(str).str.rjust(2, "0")
+    )
+    gdf['area_cluster'] = get_area_column(gdf, "ha")
+    return gdf
+
+
+def slice_single_geometry(ds_orig: xr.Dataset, gdf_orig: gpd.GeoDataFrame, params_areas: dict) -> gpd.GeoDataFrame:
     """
     Slice one polygon into climate-homogeneous sub-polygons using PCA + KMeans + Voronoi.
+
     Returns the original geometry as a single area when:
       - area < min_area_km2
       - no pixels fall within the geometry
       - n_areas or n_comp collapse to <= 1 after all caps
     """
     p = _AREAS_DEFAULTS | params_areas
- 
-    variable     = p["variable"]
+
+    variable = p["variable"]
     location_var = p["location_var"]
-    cluster_var  = p["cluster_var"]
+    cluster_var = p["cluster_var"]
     min_area_km2 = p["min_area_km2"]
     max_area_km2 = p["max_area_km2"]
     min_clusters = p["min_clusters"]
-    n_comp       = p["n_comp"]
- 
+    n_comp = p["n_comp"]
+
     if variable is None or location_var is None:
         raise ValueError("params_areas must include 'variable' and 'location_var'.")
- 
+
     gdf = gdf_orig.copy()
- 
+
     # Area guard
-    gdf['_area_sqkm'] = get_area_column(gdf, 'km2')
+    gdf["_area_km2"] = get_area_column(gdf, "km2")
     area_km2 = gdf["_area_km2"].iloc[0]
     gdf = gdf.drop(columns=["_area_km2"])
- 
-    def _single_area(gdf, cluster_var):
-        gdf = gdf.copy()
-        gdf.insert(0, cluster_var, 0)
-        return gdf
- 
     if area_km2 < min_area_km2:
-        return _single_area(gdf, cluster_var)
- 
+        return _assign_id(_single_area(gdf, cluster_var), location_var, cluster_var)
+
     # Select pixels within this geometry
     ds = ds_orig.copy()
+    ds = rename_vars(ds, variable)
     lon, lat, time = get_coordinates(ds)
 
-    ds = rename_vars(ds, variable)
- 
     ds = slice_dataset_w_geometry(ds, gdf)
     ds, _ = create_cluster_coord(ds, gdf, location_var, method="within")
- 
+
     if sum(ds[location_var].isnull().values.ravel() == False) == 0:  # noqa: E712
-        return _single_area(gdf, cluster_var)
- 
+        return _assign_id(_single_area(gdf, cluster_var), location_var, cluster_var)
+
     # Build pixel-level feature matrix (pixels x time)
     df_sum = ds.to_dataframe().reset_index()
     df_sum = df_sum.dropna(subset=[location_var]).copy()
     df_sum[time] = pd.to_datetime(df_sum[time])
- 
+
     df = df_sum.pivot_table(
         index=[lat, lon], columns=[time], values=[variable], aggfunc="mean"
     )
     df.columns = [f"{col[0]}_{col[1]}" for col in df.columns]
     df = df.dropna(axis=1, how="all").dropna(axis=0, how="all")
- 
+
     n_pixels = df.shape[0]
- 
+
     # n_areas: max of min_clusters and area-based term, capped by available pixels
     n_areas = max(min_clusters, max(1, int(area_km2 / max_area_km2)))
     n_areas = min(n_areas, n_pixels)
     n_comp_eff = min(n_comp, n_pixels, n_areas)
- 
+
     if n_areas <= 1 or n_comp_eff < 1:
-        return _single_area(gdf, cluster_var)
- 
+        return _assign_id(_single_area(gdf, cluster_var), location_var, cluster_var)
+
     # PCA + KMeans
     df_pca = apply_pca(df, n_comp_eff)
     df_pca[cluster_var] = get_cluster(df_pca, n_areas)
     df_pca = df_pca.reset_index()
- 
+
     # Polygonize clusters via Voronoi and intersect with original geometry
     gdf_cluster = create_voronoi_polygons(gdf, df_pca, cluster_var, lon, lat)
     gdf_cluster = gdf_cluster.to_crs(gdf.crs)
@@ -105,14 +117,19 @@ def _slice_single_geometry(ds_orig, gdf_orig, params_areas):
         gdf_cluster = gdf_cluster.drop(columns=[cluster_var])
     gdf_cluster = gdf_cluster.reset_index(names=cluster_var)
 
-    gdf_cluster = gdf_cluster.rename(columns={location_var: f'{location_var}_orig'})
-    gdf_cluster[location_var] = (
-        gdf_cluster[f'{location_var}_orig'].astype(str) + '-' + 
-        gdf_cluster[cluster_var].astype(str).str.rjust(2,"0")
-    )
-    gdf_cluster['_area_ha'] = get_area_column(gdf_cluster, 'ha')
- 
+    gdf_cluster = _assign_id(gdf_cluster, location_var, cluster_var)
     return gdf_cluster
+
+
+def _process_one_geometry(geom_id, gdf_single, ds_sub, params_areas, cluster_var):
+    """Worker task: slice one location_id; fall back to a single area on failure."""
+    try:
+        gdf_sliced = slice_single_geometry(ds_sub, gdf_single, params_areas)
+        return geom_id, gdf_sliced, None
+    except Exception as exc:
+        gdf_single = gdf_single.copy()
+        gdf_single.insert(0, cluster_var, 0)
+        return geom_id, gdf_single, str(exc)
 
 
 def create_climate_areas(
@@ -122,41 +139,51 @@ def create_climate_areas(
     params_s: dict = {},
 ) -> gpd.GeoDataFrame:
     """
-    Slice every polygon in a GeoDataFrame into climate-homogeneous sub-polygons.
+    Slice every polygon in a GeoDataFrame into climate-homogeneous sub-polygons, in parallel.
+
     Parameters:
         gdf : GeoDataFrame that must contain the column specified by ``location_var``.
-        ds : xr.Dataset with climate dataset covering all geometries in ``gdf``.
-        params_areas : dict parameters. Required: ``variable``, ``location_var``.
-            Optional (see ``_AREAS_DEFAULTS`` for defaults):
-            ``cluster_var``, ``min_area_km2``, ``min_pixels``, ``min_clusters``, ``n_comp``.
-        params_s : dict (optional) passed to ``subset_geometry`` to filter ``gdf`` before processing.
-            Supports ``include`` and ``exclude`` sub-dicts keyed by column name.
+        ds : xr.Dataset with climate data covering all geometries in ``gdf``.
+        params_areas : dict. Required: ``variable``, ``location_var``.
+            Optional (see ``_AREAS_DEFAULTS``): ``cluster_var``, ``min_area_km2``,
+            ``max_area_km2``, ``min_clusters``, ``n_comp``.
+        params_s : dict (optional), passed to ``subset_geometry`` to filter ``gdf`` first.
+            Supports ``include``/``exclude`` sub-dicts keyed by column name.
+        n_workers : int (optional), number of worker processes. Defaults to os.cpu_count().
+
     Returns:
-        GeoDataFrame. One row per sub-polygon with all original columns retained and a new ``cluster_var``.
+        GeoDataFrame. One row per sub-polygon, original columns retained, plus ``cluster_var``.
     """
-    cluster_var = params_areas.get("cluster_var", 'cluster_id')
+    cluster_var = params_areas.get("cluster_var", "cluster_id")
     id_col = params_areas.get("location_var", "location_id")
- 
+
     gdf_work = subset_geometry(gdf, params_s).copy()
     if len(gdf_work) == 0:
         raise ValueError("subset_geometry returned an empty GeoDataFrame. Check params_s.")
- 
-    results = []
+
     list_geoms = np.sort(gdf_work[id_col].unique())
+
+    # Pre-clip ds to each geometry's bbox in the main process, so workers
+    # only receive the small slice they need instead of the full dataset.
+    tasks = []
     for geom_id in list_geoms:
         gdf_single = gdf_work[gdf_work[id_col] == geom_id].copy()
         try:
-            gdf_sliced = _slice_single_geometry(ds, gdf_single, params_areas)
-            print(f'[{geom_id}] done', sep=' ')
-        except Exception as exc:
-            print('')
-            print(f"[{geom_id}] slicing failed ({exc}), keeping original geometry.")
-            gdf_single.insert(0, cluster_var, 0)
-            gdf_sliced = gdf_single
-        results.append(gdf_sliced)
- 
-    return pd.concat(results, axis=0, ignore_index=True)
+            ds_sub = slice_dataset_w_geometry(ds.copy(), gdf_single)
+        except Exception:
+            ds_sub = ds  # let slice_single_geometry handle/raise on the full ds
+        tasks.append((geom_id, gdf_single, ds_sub))
 
+    results_list = Parallel(n_jobs=6)(
+        delayed(_process_one_geometry)(geom_id, gdf_single, ds_sub, params_areas, cluster_var)
+        for geom_id, gdf_single, ds_sub in tasks
+    )
+    results = {geom_id: gdf_sliced for geom_id, gdf_sliced, _ in results_list}
+    for geom_id, _, error in results_list:
+        print(f"[{geom_id}] slicing failed ({error})" if error else f"[{geom_id}] done")
+
+    ordered = [results[geom_id] for geom_id in list_geoms]
+    return pd.concat(ordered, axis=0, ignore_index=True)
 
 #———————————————————————————————————————————
 # PROCESS DATASET FROM PLANET

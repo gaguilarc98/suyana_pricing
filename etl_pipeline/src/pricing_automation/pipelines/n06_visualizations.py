@@ -257,6 +257,8 @@ def plot_trigger_frequency_map(
         .rename(columns={'any_activated': 'trigger_freq'})
     )
 
+    gdf_aoi = gdf_aoi.drop_duplicates(subset=['geometry'])
+
     gdf_plot = gdf_aoi.merge(freq, on="location_id", how="left")
     gdf_plot["trigger_freq"] = gdf_plot["trigger_freq"].fillna(0)
 

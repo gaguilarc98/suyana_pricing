@@ -37,7 +37,7 @@ load_dotenv(BASE_DIR / ".env", override=True) #overrride otherwise it picks any 
 # Keyword arguments to pass to the `CONFIG_LOADER_CLASS` constructor.
 CONFIG_LOADER_ARGS = {
     "base_env": "base",
-    "default_run_env": "local",
+    "default_run_env": "base",
     "config_patterns": {
         "spark" : ["spark*/"],
         "parameters": ["parameters*", "parameters*/**", "**/parameters*"],
