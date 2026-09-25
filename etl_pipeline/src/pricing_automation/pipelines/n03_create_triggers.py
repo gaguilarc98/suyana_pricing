@@ -26,11 +26,11 @@ def register_lead_locations(
         centroids = gdf.geometry.centroid
         gdf['lon'] = centroids.x
         gdf['lat'] = centroids.y
-        gdf = gpd.GeoDataFrame(
-            gdf.drop(columns='geometry'),
-            geometry=gpd.points_from_xy(gdf['lon'], gdf['lat']),
-            crs='EPSG:4326'
-        )
+        #gdf = gpd.GeoDataFrame(
+        #    gdf.drop(columns='geometry'),
+        #    geometry=gpd.points_from_xy(gdf['lon'], gdf['lat']),
+        #    crs='EPSG:4326'
+        #)
     else:
         gdf = gpd.GeoDataFrame(
             data.copy(),
@@ -145,22 +145,28 @@ def summarize_processed_data(
     elif mode == 'within':
         # v2 is faster since it applies a spatial join
         ds_clean, df_clusters = create_cluster_coord(ds, gdf_aoi, LOCATION_NAME)
-        ds_sum = summarize_data(ds_clean, group_coords=[LOCATION_NAME])
-        print(f"Clustering and summarizing done using within strategy")
 
-        df_sum = ds_sum.to_dataframe().reset_index()
-        df_sum = df_sum.groupby(LOCATION_NAME).filter(lambda x: x[variable].count() !=0)
+        # No pixel falls within any polygon: grouping on an all-NaN coord would fail
+        if bool(ds_clean[LOCATION_NAME].isnull().all()):
+            print("No pixels within polygons, applying nearest strategy for all locations")
+            df_sum, df_clusters = nearest_method(ds, gdf_aoi, LOCATION_NAME, variable, k=k_neighbors)
+        else:
+            ds_sum = summarize_data(ds_clean, group_coords=[LOCATION_NAME])
+            print(f"Clustering and summarizing done using within strategy")
 
-        # Locations left out of 'within' due to their size get a nearest-neighbor fallback
-        list_out = list(set(gdf_aoi[LOCATION_NAME].values) - set(df_sum[LOCATION_NAME].unique()))
-        if len(list_out)>0:
-            print(f"Applying nearest strategy for {len(list_out)} polygons")
-            gdf_out = gdf_aoi[gdf_aoi[LOCATION_NAME].isin(list_out)]
+            df_sum = ds_sum.to_dataframe().reset_index()
+            df_sum = df_sum.groupby(LOCATION_NAME).filter(lambda x: x[variable].count() != 0)
 
-            df_sum_out, df_clusters_out = nearest_method(ds, gdf_out, LOCATION_NAME, variable, k=k_neighbors)
+            # Locations left out of 'within' due to their size get a nearest-neighbor fallback
+            list_out = list(set(gdf_aoi[LOCATION_NAME].values) - set(df_sum[LOCATION_NAME].unique()))
+            if len(list_out) > 0:
+                print(f"Applying nearest strategy for {len(list_out)} polygons")
+                gdf_out = gdf_aoi[gdf_aoi[LOCATION_NAME].isin(list_out)]
 
-            df_sum = pd.concat([df_sum, df_sum_out], axis=0, ignore_index=True)
-            df_clusters = pd.concat([df_clusters, df_clusters_out], axis=0, ignore_index=True)
+                df_sum_out, df_clusters_out = nearest_method(ds, gdf_out, LOCATION_NAME, variable, k=k_neighbors)
+
+                df_sum = pd.concat([df_sum, df_sum_out], axis=0, ignore_index=True)
+                df_clusters = pd.concat([df_clusters, df_clusters_out], axis=0, ignore_index=True)
     
     elif mode == 'pixel':
         ds_clean, df_clusters = create_cluster_coord(ds, gdf_aoi, LOCATION_NAME, method='within')
@@ -866,8 +872,10 @@ def reprice_dataframe(df_payouts_orig, gdf_locations_orig):
     from gdf_locations. The only place insured_value is computed."""
     df_payouts = df_payouts_orig.copy()
     gdf_locations = gdf_locations_orig.copy()
+    if 'geometry' in gdf_locations.columns:
+        gdf_locations = gdf_locations.drop(columns=['geometry'])
     df_aux = df_payouts.merge(
-        gdf_locations.drop(columns=['geometry']),
+        gdf_locations,
         how = 'inner',
         on = ['location_id', 'window', 'peril']
     )

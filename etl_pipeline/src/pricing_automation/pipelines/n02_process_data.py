@@ -496,157 +496,249 @@ def process_data_planet(
     return df_concat, ds_clim
 '''
 
+#———————————————————————————————————————————
+# SUMMARIZE GROUPED DATASET
+#———————————————————————————————————————————
+
+
+def summarize_processed_data(
+    ds_orig : xr.Dataset,
+    gdf : gpd.GeoDataFrame,
+    params_process: dict,
+):
+    """Groups the original pixel values into climate area values."""
+    variable = params_process['variable']
+    add_abs_anom = params_process.get('add_abs_anom', True)
+    mode = params_process.get('summarize_mode', 'within')
+    k_neighbors = params_process.get('k_neighbors', 1)
+
+    # Resolve dict-style variable (Planet config) to the value present in dataset
+    if isinstance(variable, dict):
+        variable = next(
+            (v for v in variable.values() if v in ds_orig.data_vars),
+            list(variable.values())[0]
+        )
+
+    ds = ds_orig.copy()
+    LOCATION_NAME = 'location_id'
+    gdf_aoi = gdf.drop_duplicates(subset='geometry')
+    gdf_aoi = gdf_aoi.to_crs(epsg='4326')
+
+    def nearest_method(ds, gdf_aoi, LOCATION_NAME, check_var, k):
+        lon, lat, time =  get_coordinates(ds)
+        ds_clean, df_clusters = create_cluster_coord(ds, gdf_aoi, LOCATION_NAME, method='nearest', check_var=check_var, k=k)
+        ds_sum = summarize_data(ds_clean, group_coords=['points'])
+        print(f"Nearest neighbors selection done")
+
+        df_sum = ds_sum.reset_index('points').to_dataframe()
+        df_sum = df_sum.reset_index().drop(columns='points', errors='ignore')
+
+        # Round to avoid float-precision mismatches between df_clusters
+        # (numpy source) and df_sum (xarray reset_index source)
+        _PREC = 6
+        df_key = df_clusters[[lon, lat, LOCATION_NAME]].copy()
+        df_key[lon] = df_key[lon].round(_PREC)
+        df_key[lat] = df_key[lat].round(_PREC)
+        if lon in df_sum.columns:
+            df_sum[lon] = df_sum[lon].round(_PREC)
+        if lat in df_sum.columns:
+            df_sum[lat] = df_sum[lat].round(_PREC)
+
+        merge_on = [c for c in [lon, lat] if c in df_sum.columns]
+        df_sum = df_key.merge(
+            df_sum,
+            how='right',
+            on=merge_on
+        ).drop(columns=[lon, lat], errors='ignore')
+
+        return df_sum, df_clusters
+
+    if mode == 'nearest':
+        df_sum, df_clusters = nearest_method(ds, gdf_aoi, LOCATION_NAME, variable, k=k_neighbors)
+        print(f"Clustering with nearest neighbor strategy done")
+
+    elif mode == 'within':
+        # v2 is faster since it applies a spatial join
+        ds_clean, df_clusters = create_cluster_coord(ds, gdf_aoi, LOCATION_NAME)
+
+        # No pixel falls within any polygon: grouping on an all-NaN coord would fail
+        if bool(ds_clean[LOCATION_NAME].isnull().all()):
+            print("No pixels within polygons, applying nearest strategy for all locations")
+            df_sum, df_clusters = nearest_method(ds, gdf_aoi, LOCATION_NAME, variable, k=k_neighbors)
+        else:
+            ds_sum = summarize_data(ds_clean, group_coords=[LOCATION_NAME])
+            print(f"Clustering and summarizing done using within strategy")
+
+            df_sum = ds_sum.to_dataframe().reset_index()
+            df_sum = df_sum.groupby(LOCATION_NAME).filter(lambda x: x[variable].count() != 0)
+
+            # Locations left out of 'within' due to their size get a nearest-neighbor fallback
+            list_out = list(set(gdf_aoi[LOCATION_NAME].values) - set(df_sum[LOCATION_NAME].unique()))
+            if len(list_out) > 0:
+                print(f"Applying nearest strategy for {len(list_out)} polygons")
+                gdf_out = gdf_aoi[gdf_aoi[LOCATION_NAME].isin(list_out)]
+
+                df_sum_out, df_clusters_out = nearest_method(ds, gdf_out, LOCATION_NAME, variable, k=k_neighbors)
+
+                df_sum = pd.concat([df_sum, df_sum_out], axis=0, ignore_index=True)
+                df_clusters = pd.concat([df_clusters, df_clusters_out], axis=0, ignore_index=True)
+    
+    elif mode == 'pixel':
+        ds_clean, df_clusters = create_cluster_coord(ds, gdf_aoi, LOCATION_NAME, method='within')
+        lon, lat, time =  get_coordinates(ds_clean)
+        df_sum = ds_clean.to_dataframe().reset_index()
+        df_sum = df_sum.dropna(subset=[LOCATION_NAME])
+        df_sum['pixel_id'] = (
+            np.round(df_sum[lon].values, 3).astype(str)
+            + '_'
+            + np.round(df_sum[lat].values, 3).astype(str)
+        )
+    
+    if add_abs_anom:
+        df_sum[f'neg_anom_{variable}'] = np.where(
+            df_sum[f'anom_{variable}'] >=0, 0, df_sum[f'anom_{variable}'] * (-1)
+        )
+        df_sum[f'pos_anom_{variable}'] = np.where(
+            df_sum[f'anom_{variable}'] <=0, 0, df_sum[f'anom_{variable}']
+        )
+
+    return df_sum, df_clusters
+
+
 def process_data_planet(
-    ds1_orig: xr.Dataset, 
     ds2_orig: xr.Dataset, 
     ds_era_orig: xr.Dataset, 
     gdf: gpd.GeoDataFrame, 
     params: dict
 ) -> tuple:
     """
-    Clean and process dataset to get unique time series and add anomalies and climatologies
+    Clean and process dataset to get unique time series by location_id, and
+    add anomalies and climatologies.
+
+    Pipeline (pandas throughout once summarized):
+      1. Build gdf_ca from gdf (rename_subset_geometry).
+      2. Slice ds_era_orig to gdf_ca (no regridding).
+      3. Rename variables to uniform names, drop single coords, clean both
+         datasets (time window + na_replace).
+      4. summarize_processed_data turns each gridded dataset into a single
+         pandas time series per location_id.
+      5. Smooth the Planet (ds2) series with `fill_gap_window` (set to 0 to
+         skip and CDF-match on the raw Planet values instead), then
+         CDF-match the ERA5 gap series onto that Planet series (day-of-year
+         quantile matching), and clip the matched gap down to its own time
+         window.
+      6. Concatenate the CDF-matched gap series with the Planet series into
+         one continuous per-location_id series, then smooth the full
+         concatenated series with `time_smooth_window`.
+      7. Compute a windowed day-of-year climatology (pandas) and anomalies.
+
     Args:
-        - ds1_orig : (xr.Dataset) Dataset from first period of Planet
-        - ds_era_orig : (xr.Dataset) Dataset from ERA5 to fill gap
-        - ds2_orig : (xr.Dataset) Dataset from second period of Planet 
+        - ds2_orig : (xr.Dataset) Dataset from Planet (e.g. AMSR2 period)
+        - ds_era_orig : (xr.Dataset) Dataset from ERA5 used to fill the gap
         - gdf : (gpd.GeoDataFrame) GeoDataFrame with geometries
         - params : (dict) Dictionary with parameters to process data
-    
+
     Returns:
-        - df_concat : pd.DataFrame with processed data
-        - ds_clim : xr.Dataset with climatologies
+        - df_concat : pd.DataFrame with processed data, one row per location_id/time
+        - df_clim : pd.DataFrame with the windowed climatology, one row per location_id/dayofyear
     """
     # Read parameters from dictionary
     subset = params['subset']
-    #location_var = params['location_var']
-    variable = params['variable']
+    variable = params.get('variable', 'swc')
     na_replace_era5 = params['na_replace']['era5']
     na_replace_planet = params['na_replace']['planet']
-    period_planet1 = params['time_window']['planet1']
     period_planet2 = params['time_window']['planet2']
     period_era5 = params['time_window']['era5']
-    interp_resolution = params.get('interp_resolution', 0.01)
     fill_gap_window = params.get('fill_gap_window', 7)
     cdf_time_window = params.get('cdf_time_window', 45)
     time_smooth_window = params.get('time_smooth_window', 21)
     clim_smooth_window = params.get('climatology_smooth_window', 7)
     add_abs_anom = params.get('add_abs_anom', True)
+    summarize_mode = params.get('summarize_mode', 'within')
+    k_neighbors = params.get('k_neighbors', 1)
 
-    # Subset climate area geometry
     LOCATION_NAME = 'location_id'
+
+    # 1. Subset climate area geometry
     gdf_ca = rename_subset_geometry(gdf, subset, LOCATION_NAME)
 
-    # Slice dataset using the given geometry
+    # 2. Slice ERA5 dataset using the given geometry (no regridding)
     ds_era = slice_dataset_w_geometry(ds_era_orig, gdf_ca)
 
-    # Interpolate data from ERA5 to a finer resolution
-    ds_era = regrid_dataset(ds_era, method='linear', res=interp_resolution)
-
-    # Rename variables to use uniform names
-    #ds1_orig = rename_vars(ds1_orig, variable)
+    # 3. Rename variables to use uniform names
     ds2_orig = rename_vars(ds2_orig, variable)
     ds_era = rename_vars(ds_era, variable)
 
     # Remove unnecesary coordinates
-    keep_coords = list(get_coordinates(ds_era)) # list of coords to keep
-    ds_era = drop_single_coords(ds_era, except_coords=keep_coords)[[variable]] 
-
-    #keep_coords_1 = list(get_coordinates(ds1_orig)) # list of coords to keep
-    #ds1_orig = drop_single_coords(ds1_orig, except_coords=keep_coords_1)[[variable]]
+    keep_coords_era = list(get_coordinates(ds_era)) # list of coords to keep
+    ds_era = drop_single_coords(ds_era, except_coords=keep_coords_era)[[variable]]
 
     keep_coords_2 = list(get_coordinates(ds2_orig)) # list of coords to keep
-    ds2_orig = drop_single_coords(ds2_orig, except_coords=keep_coords_2)[[variable]] 
+    ds2_orig = drop_single_coords(ds2_orig, except_coords=keep_coords_2)[[variable]]
 
     # Clean data with time slices and na replace values
-    #ds_period1 = clean_data(ds1_orig, date_range=period_planet1, var=variable, na_replace=na_replace_planet)
     ds_period2 = clean_data(ds2_orig, date_range=period_planet2, var=variable, na_replace=na_replace_planet)
-    ds_gap = clean_data(ds_era, date_range = ('2002-01-01', None), var=variable, na_replace=na_replace_era5)
+    ds_gap = clean_data(ds_era, date_range=period_era5, var=variable, na_replace=na_replace_era5)
     print(f"Cleaning done")
 
-    #ds_period1, df1_ = create_cluster_coord(ds_period1, gdf_ca, LOCATION_NAME) #Using v2 is faster since it applies a spatial join
-    ds_period2, df2_ = create_cluster_coord(ds_period2, gdf_ca, LOCATION_NAME) #Using v2 is faster since it applies a spatial join
-    ds_gap, dfg_ = create_cluster_coord(ds_gap, gdf_ca, LOCATION_NAME) #Using v2 is faster since it applies a spatial join
+    # 4. Summarize the gridded datasets into per-location_id pandas time series.
+    # add_abs_anom=False: anomalies aren't computed yet at this stage.
+    params_summarize = {
+        'variable': variable,
+        'summarize_mode': summarize_mode,
+        'k_neighbors': k_neighbors,
+        'add_abs_anom': False,
+    }
+    df_period2, _ = summarize_processed_data(ds_period2, gdf_ca, params_summarize)
+    df_gap, _ = summarize_processed_data(ds_gap, gdf_ca, params_summarize)
 
-    # Summarize the arrays along a specified dimension
-    #ds_period1 = summarize_data(ds_period1, group_coords=[LOCATION_NAME], func='mean')
-    ds_period2 = summarize_data(ds_period2, group_coords=[LOCATION_NAME], func='mean')
-    ds_gap = summarize_data(ds_gap, group_coords=[LOCATION_NAME], func='mean')
     print(f"Clustering and summarizing done")
 
-    # Smooth time series given the smooth window
-    #ds_period1[f'{variable}_smooth'] = get_smooth_series(ds_period1, variable, fill_gap_window)
-    ds_period2[f'{variable}_smooth'] = get_smooth_series(ds_period2, variable, fill_gap_window)
-
-    # Apply CDF matching to the time series with the second period of planet as basis
-    
-    ds_gap[f'{variable}_smooth'] = get_cdf_fixed_data(
-        ds=ds_gap,
-        ds_base=ds_period2,
+    # 5. Smooth the Planet series, then CDF-match the ERA5 gap onto it
+    df_period2[f'{variable}_smooth'] = get_smooth_series(
+        df_period2, variable, fill_gap_window, group_cols=[LOCATION_NAME], time_col='time'
+    )
+    df_gap[f'{variable}_smooth'] = get_cdf_fixed_data(
+        ds=df_gap,
+        ds_base=df_period2,
         field_target=variable,
         field_base=f'{variable}_smooth',
         group_cols=[LOCATION_NAME],
         level='dayofyear',
         window_size=cdf_time_window
     )
-    # CHANGED: AMSRE (period1) is now CDF-matched DIRECTLY to AMSR2 (period2),
-    # not to the CDF-fixed ERA5 gap. The previous AMSR2 -> ERA5 -> AMSRE chain
-    # routed AMSRE through ERA5's wetter, compressed distribution and biased the
-    # AMSRE era upward. ERA5 is retained only to fill the gap below.
-    #ds_period1[f'{variable}_smooth'] = get_cdf_fixed_data(
-    #    ds=ds_period1,
-    #    ds_base=ds_period2,
-    #    field_target=f'{variable}_smooth',
-    #    field_base=f'{variable}_smooth',
-    #    group_cols=[LOCATION_NAME],
-    #    level='dayofyear',
-    #    window_size=cdf_time_window
-    #)
-    '''
-    ds_gap[f'{variable}_smooth'] = get_cdf_fixed_data(
-        ds = ds_gap, 
-        ds_base = ds_period2, 
-        field_target = variable, 
-        field_base = f'{variable}_smooth',
-        group_cols = [LOCATION_NAME], 
-        level = 'dayofyear', 
-        window_size = cdf_time_window
-    )
-    # Use ERA5 as a bridge between Planet AMSRE and Planet AMSR2
-    ds_period1[f'{variable}_smooth'] = get_cdf_fixed_data(
-        ds = ds_period1, 
-        ds_base = ds_gap, 
-        field_target = f'{variable}_smooth', 
-        field_base = f'{variable}_smooth',
-        group_cols = [LOCATION_NAME], 
-        level = 'dayofyear', 
-        window_size = cdf_time_window
-    )
-    '''
-    ds_period1 = clean_data(ds_gap, date_range=period_planet1)
-    ds_gap = clean_data(ds_gap, date_range=period_era5)
     print(f"CDF matching done")
 
-    # Drop any scalar coordinates that ERA5 adds (e.g. 'expver') and are
-    # absent from Planet datasets — they cause xr.concat to fail.
-    extra_coords = [c for c in ds_gap.coords if c not in ds_period1.coords and c not in ds_period2.coords]
-    if extra_coords:
-        ds_gap = ds_gap.drop_vars(extra_coords)
+    # Clip the CDF-matched gap down to its own (pre-Planet) time window so it
+    # doesn't overlap with the Planet period.
+    if period_era5 is not None:
+        mask = pd.Series(True, index=df_gap.index)
+        if period_era5[0] is not None:
+            mask &= df_gap['time'] >= pd.to_datetime(period_era5[0])
+        if period_era5[1] is not None:
+            mask &= df_gap['time'] <= pd.to_datetime(period_era5[1])
+        df_gap = df_gap[mask].copy()
 
-    # Join and smooth the resulting time series
-    ds_concat = xr.concat([ds_period1, ds_gap, ds_period2], dim='time')
+    # 6. Concatenate the two harmonized series
+    keep_cols = [LOCATION_NAME, 'time', variable, f'{variable}_smooth']
+    df_concat = pd.concat([df_gap[keep_cols], df_period2[keep_cols]], axis=0, ignore_index=True)
+    df_concat = df_concat.sort_values([LOCATION_NAME, 'time']).reset_index(drop=True)
     print(f"Concatenating arrays done")
-    
-    ds_concat = ds_concat.rename({variable: f'{variable}_orig'})
-    ds_concat[variable] = get_smooth_series(ds_concat, f'{variable}_smooth', time_smooth_window)
 
-    ds_concat, ds_clim = get_climatology(
-        ds_concat, variable, f'clim_{variable}', level='dayofyear', smooth_window=clim_smooth_window
+    df_concat = df_concat.rename(columns={variable: f'{variable}_orig'})
+    df_concat[variable] = get_smooth_series(
+        df_concat, f'{variable}_smooth', time_smooth_window, group_cols=[LOCATION_NAME], time_col='time'
     )
-     # Compute anomalies using the added climatology
-    ds_concat[f'anom_{variable}'] = ds_concat[variable] - ds_concat[f'clim_{variable}']
-    print('Climatology and anomaly successfully added')
 
-    df_concat = ds_concat.to_dataframe().reset_index()
+    # 7. Windowed day-of-year climatology and anomalies
+    df_concat, df_clim = get_climatology(
+        df_concat, variable, f'clim_{variable}', level='dayofyear',
+        smooth_window=clim_smooth_window, group_cols=[LOCATION_NAME]
+    )
+
+    # Compute anomalies using the added climatology
+    df_concat[f'anom_{variable}'] = df_concat[variable] - df_concat[f'clim_{variable}']
+    print('Climatology and anomaly successfully added')
 
     if add_abs_anom:
         df_concat[f'neg_anom_{variable}'] = np.where(
@@ -656,7 +748,7 @@ def process_data_planet(
             df_concat[f'anom_{variable}'] <=0, 0, df_concat[f'anom_{variable}']
         ) 
 
-    return df_concat, ds_clim
+    return df_concat, df_clim
 
 #———————————————————————————————————————————
 # PROCESS DATASET WITH ANOMALIES

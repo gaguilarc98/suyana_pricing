@@ -17,8 +17,8 @@ _arg:
 params_s:
   include: {}
     #AdminLvl1: ['Buenos Aires']
-  exclude: #{}
-    AdminLvl1: ['Tierra Del Fuego', 'Chubut', 'Santa Cruz']
+  exclude: {}
+    #AdminLvl1: ['Tierra Del Fuego', 'Chubut', 'Santa Cruz']
   simplify: false #true
   override_gdf: false
   minx: -81.74
@@ -67,7 +67,7 @@ params_process:
   na_replace: -9999
   time_window:
     - '1996-01-01'
-    - '2025-12-31'
+    - '2026-05-31'
   interp_resolution: 0
   time_smooth_window: 0
   climatology_smooth_window: 0
@@ -82,7 +82,7 @@ params_lead_specs:
 
 params_summarize:
   variable: ${_arg.field}
-  summarize_mode: 'nearest' #'nearest' #'within'
+  summarize_mode: 'within' #'nearest' #'within'
   add_abs_anom: true #true
 
 # Parameters for creating triggers

@@ -14,8 +14,16 @@ _arg:
 
 # Parameters for aoi bounding box
 params_s:
-  include:
-    {} #municipio: ['Puerto Villarroel'] #['Mizque', 'Quillacollo', 'Colomi', 'Tarija', 'Yapacaní', 'Puerto Villarroel', 'Yapacaní', 'Chimoré']
+  include: {}
+  #  {
+  #    AdminLvl1: ['Santa Cruz'],
+  #    location_id: [
+  #      'ID-073', 'ID-087', 'ID-089', 'ID-100', 'ID-109', 'ID-111',
+  #      'ID-133', 'ID-149', 'ID-155', 'ID-162', 'ID-184', 'ID-185',
+  #      'ID-223', 'ID-227', 'ID-230', 'ID-234', 'ID-235', 'ID-249',
+  #      'ID-252', 'ID-329'
+  #    ]
+  #  } #municipio: ['Puerto Villarroel'] #['Mizque', 'Quillacollo', 'Colomi', 'Tarija', 'Yapacaní', 'Puerto Villarroel', 'Yapacaní', 'Chimoré']
   exclude: {}
   simplify: true
   override_gdf: false
@@ -48,16 +56,16 @@ params_credentials:
 
 params_subscription:
   id_column: 'location_id' #'MPIO_CNMBR' #'id_canton' 
-  prefix: ${_arg.country}_test #'CO-municipio' #'BO-SC-canton'
+  prefix: ${_arg.country} #'CO-municipio' #'BO-SC-canton'
   #variable: 'SWC'
   #version: 'V5.0'
   #band: 'C'
-  start_date: '2026-02-01' #'2002-06-15' #'2012-07-25'
-  end_date: '2026-02-28' #'2011-10-03' #'2025-08-31'
+  start_date: '2026-01-01' #'2002-06-15' #'2012-07-25'
+  end_date: '2026-05-31' #'2011-10-03' #'2025-08-31'
   
 params_transform_1:
   id_location: ${_arg.loc_id}
-  prefix: ${_arg.country}_test
+  prefix: ${_arg.country}
   #suffix: null
   #variable: 'SWC'
   start_date: '2002-06-15'
@@ -65,11 +73,11 @@ params_transform_1:
 
 params_transform_2:
   id_location: ${_arg.loc_id}
-  prefix: ${_arg.country}_test
+  prefix: ${_arg.country}
   #suffix: null
   #variable: 'SWC'
-  start_date: '2026-01-01' #'2012-07-25'
-  end_date: '2026-01-31' #'2025-12-31'
+  start_date: '2012-07-25' #'2012-07-25'
+  end_date: '2026-05-31' #'2025-12-31'
 
 params_process_planet:
   subset:   
@@ -86,14 +94,14 @@ params_process_planet:
       - '2002-06-15'
       - '2011-10-03'
     era5: 
-      - '2011-10-04'
-      - '2012-07-24'
+      - '1995-01-01'
+      - '2012-07-24' #'2012-07-24'
     planet2: 
-      - '2012-07-25'
+      - '2012-07-25' #'2012-07-25'
       - null
-  interp_resolution: 0.01 #If 0 then the functions does not interpolate
-  fill_gap_window: 7
-  cdf_time_window: 45
+  interp_resolution: 0 #0.01 #If 0 then the functions does not interpolate
+  fill_gap_window: 0 #7
+  cdf_time_window: 30
   time_smooth_window: 21
   climatology_smooth_window: 7
   add_abs_anom: true

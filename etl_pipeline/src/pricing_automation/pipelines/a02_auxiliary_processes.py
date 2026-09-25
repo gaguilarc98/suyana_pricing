@@ -37,8 +37,40 @@ def add_time_coordinate(ds_orig, level='week', time_dim=None, n_days=7):
             raise ValueError(f"No support for level {lvl}")
     return ds
 
-def get_smooth_series(ds, field, smooth_window):
-    """Smooth time series with a time window"""
+def get_smooth_series(ds, field, smooth_window, group_cols=None, time_col=None):
+    """Smooth a time series with a rolling window.
+
+    Works with either input:
+      - xr.Dataset: original behaviour, one rolling mean over the time dim.
+      - pd.DataFrame (long format): rolling mean per group in `group_cols`,
+        ordered by `time_col` (defaults to 'time'). Vectorized via
+        groupby().transform(), no per-group Python loop.
+
+    Args:
+        - ds : xr.Dataset or pd.DataFrame
+        - field : name of the column/variable to smooth
+        - smooth_window : rolling window size (in rows / time steps)
+        - group_cols : (pd.DataFrame only) columns identifying each series,
+            e.g. ['location_id']. None smooths a single ungrouped series.
+        - time_col : (pd.DataFrame only) name of the time column
+    Returns:
+        - xr.DataArray or pd.Series (aligned to ds's original index) with
+          the smoothed values
+    """
+    if isinstance(ds, pd.DataFrame):
+        if smooth_window <= 0:
+            return ds[field]
+        time_col = time_col or 'time'
+        sort_cols = (group_cols or []) + [time_col]
+        df = ds.sort_values(sort_cols)
+        if group_cols:
+            smoothed = df.groupby(group_cols)[field].transform(
+                lambda s: s.rolling(smooth_window, min_periods=1).mean()
+            )
+        else:
+            smoothed = df[field].rolling(smooth_window, min_periods=1).mean()
+        return smoothed.reindex(ds.index)
+
     time = get_time_coordinate(ds)
     if smooth_window>0:
         da = ds[field].rolling({time: smooth_window}, min_periods=1).mean()
@@ -151,9 +183,128 @@ def get_window_days(doy, window=30):
     return ((days - 1) % 365) + 1
  
  
+def _normalize_group_key(key):
+    """Coerce a pandas groupby key to a tuple.
+
+    For a single-column group_cols, pandas can return either a bare scalar
+    or a 1-element tuple depending on the call site (plain groupby iteration
+    vs. `.name` inside groupby().apply()); normalizing both to a tuple makes
+    dict lookups between the two reliable regardless of pandas version.
+    """
+    return key if isinstance(key, tuple) else (key,)
+
+
+def _get_cdf_fixed_data_df(
+    df_target: pd.DataFrame,
+    df_base: pd.DataFrame,
+    field_target: str,
+    field_base: str,
+    group_cols: list,
+    level: str = None,
+    window_size: int = 45,
+    min_pool: int = 5,
+    n_jobs: int = 6,
+) -> pd.Series:
+    """pandas DataFrame version of get_cdf_fixed_data.
+
+    Same rolling day-of-year CDF matching as the xr.Dataset path, but on
+    long-format DataFrames (one row per group/time). For each day-of-year,
+    the windowed base and source pools are built once and cached per group
+    (dict lookup), then every group's values are mapped in an explicit
+    loop over groups + pd.concat, instead of re-masking the pool for
+    every group. Days are computed in parallel with joblib, as in the
+    xr.Dataset path.
+
+    Returns:
+        - pd.Series of the rescaled field, aligned to df_target's index
+    """
+    if level is None:
+        level = 'dayofyear'
+    if level != 'dayofyear':
+        raise ValueError("get_cdf_fixed_data only supports level='dayofyear'")
+    if isinstance(group_cols, str):
+        group_cols = [group_cols]
+
+    # Work on a fresh, guaranteed-unique positional index internally, and
+    # map the result back onto df_target's original index by position at
+    # the end. This makes the function robust even when df_target itself
+    # carries a non-unique index (e.g. built from an upstream merge/concat
+    # or groupby step that didn't reset_index) -- reindexing by label would
+    # otherwise raise "cannot reindex on an axis with duplicate labels".
+    orig_index = df_target.index
+    df_o = df_target.reset_index(drop=True)
+    df_b = df_base.reset_index(drop=True)
+    if 'dayofyear' not in df_o.columns:
+        df_o['dayofyear'] = pd.to_datetime(df_o['time']).dt.dayofyear
+    if 'dayofyear' not in df_b.columns:
+        df_b['dayofyear'] = pd.to_datetime(df_b['time']).dt.dayofyear
+
+    base_by_doy = {d: g for d, g in df_b.groupby('dayofyear')}
+
+    def _map_day(day):
+        df_orig = df_o[df_o['dayofyear'] == day]
+        if df_orig.empty:
+            return None
+
+        list_days = get_window_days(day, window=window_size)
+        base_parts = [base_by_doy[d] for d in list_days if d in base_by_doy]
+        if not base_parts:
+            return None
+        df_base_pool = pd.concat(base_parts, axis=0)
+        src_pool_all = df_o[df_o['dayofyear'].isin(list_days)]
+
+        # Build each group's pool once for this day, instead of re-masking
+        # the full pool inside a per-group loop. Keys are normalized to
+        # tuples: pandas can hand back a bare scalar vs. a 1-tuple for a
+        # single-column group_cols depending on the call site, and that
+        # mismatch would otherwise silently drop every lookup.
+        base_pools = {
+            _normalize_group_key(key): g[field_base].dropna().to_numpy()
+            for key, g in df_base_pool.groupby(group_cols)
+        }
+        src_pools = {
+            _normalize_group_key(key): np.sort(g[field_target].dropna().to_numpy())
+            for key, g in src_pool_all.groupby(group_cols)
+        }
+
+        # Loop over groups explicitly and concat the pieces, rather than
+        # groupby().apply(): avoids pandas' grouping-columns-in-apply
+        # deprecation entirely (and the include_groups kwarg it requires,
+        # which is only available from pandas>=2.2), and is just as fast
+        # since the groups were already split above for the pool lookups.
+        mapped_parts = []
+        for gkey, g in df_orig.groupby(group_cols):
+            gkey = _normalize_group_key(gkey)
+            base_pool = base_pools.get(gkey, np.array([]))
+            src_sorted = src_pools.get(gkey, np.array([]))
+            vals = g[field_target].to_numpy()
+            if len(base_pool) < min_pool or len(src_sorted) < min_pool:
+                mapped = np.full(len(vals), np.nan)
+            else:
+                q = np.searchsorted(src_sorted, vals, side='right') / len(src_sorted)
+                q = np.clip(q, 0.0, 1.0)
+                mapped = np.quantile(base_pool, q)
+                mapped[np.isnan(vals)] = np.nan
+            mapped_parts.append(pd.Series(mapped, index=g.index))
+
+        return pd.concat(mapped_parts)
+
+    results = Parallel(n_jobs=n_jobs)(
+        delayed(_map_day)(day) for day in np.arange(1, 367)
+    )
+    results = [r for r in results if r is not None]
+    if not results:
+        return pd.Series(np.nan, index=orig_index)
+
+    # df_o's positional index (0..len(df_o)-1) is always unique by
+    # construction, so this reindex is always safe even if orig_index isn't.
+    mapped = pd.concat(results).reindex(np.arange(len(df_o)))
+    return pd.Series(mapped.to_numpy(), index=orig_index)
+
+
 def get_cdf_fixed_data(
-    ds: xr.Dataset, 
-    ds_base: xr.Dataset, 
+    ds, 
+    ds_base, 
     field_target: str, 
     field_base: str,
     group_cols: list, 
@@ -161,7 +312,7 @@ def get_cdf_fixed_data(
     window_size: int = 45,
     min_pool: int = 5,
     n_jobs: int = 6,
-) -> xr.DataArray:
+):
     """
     Performs a rolling day-of-year CDF (quantile) matching of the target field onto
     the distribution of the base field.
@@ -174,20 +325,33 @@ def get_cdf_fixed_data(
     the same quantile of the windowed base pool. Interpolation (np.quantile) on the
     base side is what reproduces Planet's smoothness and distribution, replacing the
     discrete rank-bucket lookup used previously.
+
+    Works with either input:
+      - xr.Dataset: original behaviour, group_cols must be a subset of ds.dims,
+        returns an xr.DataArray.
+      - pd.DataFrame (long format, one row per group/time): group_cols must be
+        columns, returns a pd.Series aligned to ds's index. See
+        `_get_cdf_fixed_data_df` for the vectorized/parallel implementation.
  
     Args:
-        - ds : (xr.Dataset) Dataset whose field_target will be rescaled
-        - ds_base : (xr.Dataset) Dataset providing the reference distribution (field_base)
+        - ds : (xr.Dataset or pd.DataFrame) whose field_target will be rescaled
+        - ds_base : (xr.Dataset or pd.DataFrame) providing the reference distribution (field_base)
         - field_target : (str) Name of the field to rescale in ds
         - field_base : (str) Name of the reference field in ds_base
-        - group_cols : (list) Grouping dimensions (must be a subset of ds.dims), e.g. [location_id]
+        - group_cols : (list) Grouping dimensions/columns, e.g. [location_id]
         - level : (str) Time level for the rolling window. Only 'dayofyear' is supported.
         - window_size : (int) Half-width in days of the day-of-year window (Planet uses 45)
         - min_pool : (int) Minimum number of valid values required on each side to match
         - n_jobs : (int) Parallel workers across day-of-year
     Returns:
-        - xr.DataArray with the rescaled field, indexed by the original dims of ds
+        - xr.DataArray or pd.Series with the rescaled field
     """
+    if isinstance(ds, pd.DataFrame):
+        return _get_cdf_fixed_data_df(
+            ds, ds_base, field_target, field_base, group_cols,
+            level=level, window_size=window_size, min_pool=min_pool, n_jobs=n_jobs,
+        )
+
     # Get dimensions and check that group_cols is a subset of the dimensions
     dims = list(ds.sizes.keys())
     if not set(group_cols).issubset(set(dims)):
@@ -281,8 +445,87 @@ def add_climatology(ds, ds_clim, field, var_name='climatology', level = 'week'):
     return ds
 
 
-def get_climatology(ds, field, var_name='climatology', level='dayofyear', smooth_window=0, time_dim=None, func='mean'):
-    '''Get climatologies for the specified variable at the level selected'''
+def _get_climatology_df(df, field, var_name, level, window, func, group_cols):
+    """pandas DataFrame version of get_climatology.
+
+    Unlike the xr.Dataset path (mean per day-of-year, then the resulting
+    365-point curve is smoothed), the support for each target day here is a
+    rolling window of +/- `window` days centered at that day, wrapping at
+    year end -- raw observations are pooled first and then reduced, the same
+    scheme as get_climatology_windowed.
+
+    Vectorized: every row is exploded to the (2*window+1) target days it
+    contributes to via a single numpy broadcast, then one groupby().agg()
+    reduces every (group, target day) pool at once -- no explicit loop over
+    days or groups.
+
+    Args:
+        - df : (pd.DataFrame) long-format, one row per group/time
+        - field : (str) column to summarize
+        - var_name : (str) name of the output climatology column
+        - level : (str) only 'dayofyear' is supported
+        - window : (int) +/- half-width in days of the pooling window
+        - func : (str) 'mean' or 'std'
+        - group_cols : (list or None) columns identifying each series, e.g. ['location_id']
+    Returns:
+        - df_out : df with `var_name` merged back in
+        - df_clim : standalone climatology table indexed by group_cols + dayofyear
+    """
+    if level != 'dayofyear':
+        raise ValueError("The pandas path of get_climatology only supports level='dayofyear'")
+    if func not in ('mean', 'std'):
+        raise ValueError(f'The summarizing function {func} is not implemented for the pandas path.')
+    if group_cols is None:
+        group_cols = []
+    elif isinstance(group_cols, str):
+        group_cols = [group_cols]
+
+    df = df.copy()
+    if 'dayofyear' not in df.columns:
+        df['dayofyear'] = pd.to_datetime(df['time']).dt.dayofyear
+
+    doy = df['dayofyear'].to_numpy()
+    n = len(df)
+
+    if window > 0:
+        offsets = np.arange(-window, window + 1)
+        # Wrap at year end, same convention as get_window_days: (days-1)%365+1
+        targets = ((doy[:, None] + offsets[None, :] - 1) % 365) + 1
+        rep = offsets.size
+        df_exp = df.iloc[np.repeat(np.arange(n), rep)].copy()
+        df_exp['_target_doy'] = targets.ravel()
+    else:
+        df_exp = df.copy()
+        df_exp['_target_doy'] = doy
+
+    group_keys = group_cols + ['_target_doy']
+    clim = getattr(df_exp.groupby(group_keys)[field], func)()
+    clim = clim.rename(var_name).reset_index().rename(columns={'_target_doy': 'dayofyear'})
+
+    merge_keys = group_cols + ['dayofyear']
+    df_out = df.merge(clim, how='left', on=merge_keys)
+
+    return df_out, clim
+
+
+def get_climatology(
+    ds, field, var_name='climatology', level='dayofyear', smooth_window=0,
+    time_dim=None, func='mean', group_cols=None,
+):
+    '''Get climatologies for the specified variable at the level selected.
+
+    Works with either input:
+      - xr.Dataset: original behaviour, per-pixel climatology curve computed
+        by grouping on `level`, then the curve itself is smoothed with a
+        rolling window of `smooth_window`.
+      - pd.DataFrame (long format): windowed climatology, i.e. for each
+        target day-of-year the raw observations within +/- `smooth_window`
+        days are pooled (wrapping at year end) before reducing, grouped by
+        `group_cols` (e.g. ['location_id']). See `_get_climatology_df`.
+    '''
+    if isinstance(ds, pd.DataFrame):
+        return _get_climatology_df(ds, field, var_name, level, smooth_window, func, group_cols)
+
     if time_dim is None:
         time_dim = get_time_coordinate(ds)
     

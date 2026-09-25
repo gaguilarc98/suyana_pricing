@@ -272,8 +272,8 @@ def planet_pipeline(**kwargs) -> Pipeline:
         ),
         node(
             func = process_data_planet,
-            inputs = ['ds_request_1', 'ds_request_2', 'ds_request', 'gdf_climate_areas', 'params:params_process_planet'],
-            outputs = ['df_cluster', 'ds_climatology'],
+            inputs = ['ds_request_2', 'ds_request', 'gdf_climate_areas', 'params:params_process_planet'],
+            outputs = ['df_cluster', 'df_climatology'],
             name = 'process_data',
             tags = ['process']
         ),

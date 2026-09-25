@@ -11,7 +11,7 @@ params_process:
   func: 'quantile'
   quantiles: [0.05]
   side: 'lower'
-  threshold: 2
+  threshold: 4
   pixel_window: 3
   num_periods: 3
 

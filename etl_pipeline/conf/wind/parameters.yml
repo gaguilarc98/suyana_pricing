@@ -11,7 +11,7 @@ params_process:
   quantiles: [0.95]
   umbral: 1
   side: 'upper'
-  threshold: 50
+  threshold: 40
   pixel_window: 3
   num_periods: 3
 

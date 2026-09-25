@@ -87,15 +87,14 @@ ds_request_2:
     consolidated: true
 
 #Index Data
-ds_climatology:
-  type: pricing_automation.datasets_registry.XarrayZarrDataset
-  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/features/${_arg.provider}_${_arg.field}_climatology.zarr
+df_climatology:
+  type: pricing_automation.datasets_registry.DeltaLakeDataset
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/features/${_arg.provider}_${_arg.field}_original_climatology
   save_args:
-    consolidated: true
-    mode: a
-    append_dim: location_id
-  load_args:
-    consolidated: true
+    #mode: overwrite
+    #schema_mode: overwrite
+    mode: append
+    schema_mode: merge
 
 # Summarized Data
 df_cluster: 
@@ -104,7 +103,9 @@ df_cluster:
   #save_args:
   #  compression: GZIP
   type: pricing_automation.datasets_registry.DeltaLakeDataset
-  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/outputs/${_arg.provider}_${_arg.field}_daily_indices
+  filepath: ${globals:data_path}/${_arg.country}/${_arg.region}/outputs/${_arg.provider}_${_arg.field}_original_daily_indices
   save_args:
+    #mode: overwrite
+    #schema_mode: overwrite
     mode: append
     schema_mode: merge
